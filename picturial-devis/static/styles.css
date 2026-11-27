@@ -78,20 +78,21 @@ table.devis thead th.num { text-align: right; }
 table.devis td { border-bottom: 1px solid #eee; padding: 3px 6px; vertical-align: middle; }
 table.devis td.num, table.devis input.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 table.devis tr.poste td { background: #f0f0f0; font-weight: 700; }
-table.devis tr.rubrique td { background: #f8f8f8; font-weight: 600; }
+table.devis tr.rubrique td, table.devis tr.ligne td { background: #f8f8f8; font-weight: 600; }
 table.devis tr.ligne:hover td, table.devis tr.detail:hover td, table.devis tr.technicien:hover td { background: #fffbe0; }
 table.devis tr.technicien > td { background: #f4f9ff; font-weight: 600; }
 table.devis tr.charge > td { color: #444; font-style: italic; }
 td.code { color: var(--gris); white-space: nowrap; font-size: 12px; }
 input.cell, select.cell {
-  border: 1px solid transparent; background: transparent; width: 100%; min-width: 60px;
+  border: 1px solid var(--bord); background: #fff; width: 100%; min-width: 60px;
   font: inherit; padding: 2px 4px; border-radius: 4px; color: inherit;
 }
-input.cell:focus, select.cell:focus { border-color: var(--jaune-fonce); background: #fff; outline: none; }
+input.cell:focus, select.cell:focus { border-color: var(--jaune-fonce); background: #fffbe0; outline: none; }
 input.num { text-align: right; }
-td.montant { font-weight: 600; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
-td.montant.calcule { color: var(--calcule); font-weight: 500; }
-td.montant.saisi { color: var(--ink); }
+td.montant { white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+td.montant.saisi { color: var(--ink); font-weight: 400; }
+td.montant.calcule { color: var(--calcule); font-weight: 400; }
+td.montant.total { color: var(--calcule); font-weight: 700; }
 td.montant.hyp { color: var(--hyp); }
 .chevron { cursor: pointer; user-select: none; display: inline-block; width: 16px; color: var(--gris); }
 .actions-cell { white-space: nowrap; text-align: right; }
@@ -168,7 +169,7 @@ td.montant.hyp { color: var(--hyp); }
 .ok { color: #14532d; font-weight: 700; }
 .ko { color: #8a1f1f; font-weight: 700; }
 .legend { font-size: 12px; color: var(--gris); margin: 6px 0; }
-.legend .m-saisi { font-weight: 700; color: var(--ink); }
+.legend .m-saisi { font-weight: 400; color: var(--ink); }
 .legend .m-calcule { color: var(--calcule); }
 .legend .m-hyp { color: var(--hyp); }
 .bareme-section { background: #fff; border: 1px solid var(--bord); border-radius: 10px; padding: 12px 18px; margin: 12px 0; }

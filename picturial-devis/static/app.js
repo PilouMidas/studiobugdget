@@ -366,8 +366,8 @@ function renderDevis() {
   );
   app.append(bar);
   const leg = el("p", { class: "legend" });
-  leg.append("Légende : ", el("span", { class: "m-saisi", text: "noir gras = montant saisi (modifiable)" }), " · ",
-    el("span", { class: "m-calcule", text: "bleu = montant calculé automatiquement" }), " · ",
+  leg.append("Légende : ", el("span", { class: "m-saisi", text: "noir = montant saisi (modifiable)" }), " · ",
+    el("span", { class: "m-calcule", text: "bleu = calculé · bleu gras = total (somme des sous-lignes)" }), " · ",
     el("span", { class: "m-hyp", text: "⚠ hypothèse à vérifier" }),
     " — le total d’une ligne détaillée (rubrique) est la somme de ses sous-lignes et n’est pas modifiable directement. Le bouton ⋯ à droite de chaque ligne ouvre ses actions : ajouter un sous-détail, ventiler (région / France / étranger), dupliquer, déplacer, supprimer.");
   app.append(leg);
@@ -483,7 +483,7 @@ function renderDevis() {
     const forfait = el("input", { class: "cell num", value: n.montant_forfait ?? "", style: "width:110px" });
     forfait.addEventListener("change", () => saveLigne(n.id, { montant_forfait: parseNum(forfait.value) }));
 
-    let mcls = "montant " + (n.statut_montant || "calcule");
+    let mcls = "montant " + (n.statut_montant || "calcule") + (hasKids ? " total" : "");
     if (n.technicien && ((n.tech_info && n.tech_info.avertissements || []).length || n.technicien.hypothese_manuelle)) mcls += " hyp";
     const montantTd = el("td", { class: mcls, text: fmt(n.montant) });
     if (n.technicien && n.tech_info) montantTd.title = (n.tech_info.avertissements || []).join("\n");
@@ -619,14 +619,15 @@ async function renderPersonnelView(d, poste) {
       tr.append(el("td", { class: "code", text: n.chemin || n.code || "" }));
       tr.append(el("td", { style: "padding-left:" + prof * 16 + "px", text: n.libelle }));
       tr.append(el("td", {}), el("td", { class: "num" }), el("td", {}), el("td", { class: "num" }),
-        el("td", { class: "montant calcule num", text: fmt(n.montant) }),
+        el("td", { class: "montant calcule total num", text: fmt(n.montant) }),
         ...ventTds(n, false), aVentilerTd(n), actionsTd(n));
       return tr;
     }
 
     function feuilleRow(n, prof) {
-      // ligne fonction sans engagement : saisie directe salaire × qté (comme une ligne du modèle)
-      const tr = el("tr", { class: "detail", "data-id": n.id });
+      // ligne sans engagement : saisie directe (comme une ligne du modèle) — garde son type
+      // (ligne = gras, détail = normal) ; les sous-niveaux ne font qu'ajouter une indentation
+      const tr = el("tr", { class: n.type, "data-id": n.id });
       tr.append(el("td", { class: "code", text: n.chemin || n.code || "" }));
       const lib = el("input", { class: "cell", value: n.libelle, style: "min-width:200px" });
       lib.addEventListener("change", () => saveLigne(n.id, { libelle: lib.value }));
@@ -749,15 +750,15 @@ function renderPoste1View(d, poste) {
     ];
   }
 
-  app.append(el("p", { class: "hint", text: "Page 1 « Droits artistiques » — comme l’onglet Excel « 1.Droits artistiques » : colonne « En région » = G, « France » = H, « Total » = I = G + H (+ étranger). Sur une ligne vide, saisissez G et/ou H : le total se calcule tout seul. Sur une ligne avec un total saisi, G + H + étranger ne doit pas le dépasser (le reliquat reste « à ventiler »)." }));
-  app.append(el("p", { class: "legend", text: "Légende : noir gras = montant saisi (modifiable) · bleu = calculé automatiquement (total de la rubrique 14 = somme de 1411 + 1412, non modifiable) · « À ventiler » = part pas encore affectée région/France/étranger · ⋯ = actions de la ligne (sous-détail, ventiler, dupliquer, supprimer…). Pour chiffrer un droit, éditez directement la ligne existante (ex. 1412 Droits synchro) ou ajoutez un sous-détail sous la rubrique 14 — aucun code n’est inventé." }));
+  app.append(el("p", { class: "hint", text: "Page 1 « Droits artistiques » — comme l’onglet Excel « 1.Droits artistiques » : saisissez « En région » et/ou « France » sur une ligne vide, le « Total » se calcule tout seul. Sur une ligne avec un total saisi, région + France + étranger ne doit pas le dépasser (le reliquat reste « à ventiler »)." }));
+  app.append(el("p", { class: "legend", text: "Légende : noir = montant saisi (modifiable) · bleu = calculé automatiquement · bleu gras = total d’une rubrique/poste (somme de ses lignes, non modifiable) · « À ventiler » = part pas encore affectée · ⋯ = actions de la ligne (sous-détail, ventiler, dupliquer, supprimer…). Pour chiffrer un droit, éditez directement la ligne existante (ex. 1412 Droits synchro) ou ajoutez un sous-détail sous la rubrique 14 — aucun code n’est inventé." }));
 
   const wrap = el("div", { class: "table-wrap" });
   const table = el("table", { class: "devis poste1" });
   table.append(el("thead", {}, el("tr", {},
     el("th", { text: "Code" }), el("th", { text: "Libellé" }),
-    el("th", { class: "num", text: "En région (€) — G" }), el("th", { class: "num", text: "France (€) — H" }),
-    el("th", { class: "num", text: "Étranger (€)" }), el("th", { class: "num", text: "Total (€) — I" }),
+    el("th", { class: "num", text: "En région (€)" }), el("th", { class: "num", text: "France (€)" }),
+    el("th", { class: "num", text: "Étranger (€)" }), el("th", { class: "num", text: "Total (€)" }),
     el("th", { class: "num", text: "À ventiler" }), el("th", { text: "Actions", style: "text-align:right" }))));
   const tbody = el("tbody");
   table.append(tbody);
@@ -800,14 +801,14 @@ function renderPoste1View(d, poste) {
         lib.addEventListener("change", () => saveLigne(n.id, { libelle: lib.value }));
         tr.append(el("td", { style: "padding-left:" + prof * 16 + "px" }, lib));
         tr.append(ventTd(n, "en_region", true), ventTd(n, "hors_region", true), ventTd(n, "etranger", true));
-        const tot = el("input", { class: "cell num", style: "width:120px", value: n.montant_forfait != null ? fmtPlain(n.montant_forfait) : (n.montant ? fmtPlain(n.montant) : ""), placeholder: "I = G+H" });
+        const tot = el("input", { class: "cell num", style: "width:120px", value: n.montant_forfait != null ? fmtPlain(n.montant_forfait) : (n.montant ? fmtPlain(n.montant) : ""), placeholder: "total" });
         tot.addEventListener("change", () => saveLigne(n.id, { montant_forfait: parseNum(tot.value) }));
         tr.append(el("td", { class: "num" }, tot));
         tr.append(aVentilerTd(n), actionsTd(n));
       } else {
         tr.append(el("td", { style: "padding-left:" + prof * 16 + "px", text: n.libelle }));
         tr.append(ventTd(n, "en_region", false), ventTd(n, "hors_region", false), ventTd(n, "etranger", false));
-        tr.append(el("td", { class: "montant calcule num", text: fmt(n.montant) }));
+        tr.append(el("td", { class: "montant calcule total num", text: fmt(n.montant) }));
         tr.append(el("td", { class: "num" }), aVentilerTd(n), actionsTd(n));
         tbody.append(tr);
         walk(kids, prof + 1);
@@ -821,7 +822,7 @@ function renderPoste1View(d, poste) {
   tbody.append(el("tr", { class: "poste" },
     el("td", { class: "code", text: "1." }), el("td", { text: "TOTAL POSTE 1 — DROITS ARTISTIQUES" }),
     el("td", { class: "num", text: fmt(poste.en_region) }), el("td", { class: "num", text: fmt(poste.hors_region) }),
-    el("td", { class: "num", text: fmt(poste.etranger || 0) }), el("td", { class: "montant num", text: fmt(poste.montant) }),
+    el("td", { class: "num", text: fmt(poste.etranger || 0) }), el("td", { class: "montant total num", text: fmt(poste.montant) }),
     el("td", { class: "num", text: fmt(poste.a_ventiler) }), el("td", {})));
 }
 

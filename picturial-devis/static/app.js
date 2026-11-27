@@ -371,9 +371,10 @@ function renderDevis() {
     " — le total d’une ligne détaillée est la somme de ses sous-détails.");
   app.append(leg);
 
-  // Page 2 « Personnel » : vue dédiée façon onglet « 2.Personnel » du modèle Excel
+  // Pages dédiées façon onglets du modèle Excel : poste 1 (Droits artistiques) et poste 2 (Personnel)
   const posteSel = state.posteFilter ? d.arbre.find((r) => r.id === state.posteFilter) : null;
   if (posteSel && posteSel.code === "2") return renderPersonnelView(d, posteSel);
+  if (posteSel && posteSel.code === "1") return renderPoste1View(d, posteSel);
 
   const parentMap = {};
   const depthMap = {};
@@ -712,6 +713,114 @@ async function renderPersonnelView(d, poste) {
   } catch (e) {
     app.append(el("div", { class: "banner", text: "Erreur : " + e.message }));
   }
+}
+
+/* ---------------- page 1 « 1. Droits artistiques » (vue façon onglet Excel, colonnes G/H/I) ---------------- */
+
+function renderPoste1View(d, poste) {
+  async function reload() { await loadDevis(); renderDevis(); }
+  async function saveLigne(id, champs) {
+    try { await api(`/api/lignes/${id}`, "PUT", champs); } catch (e) { alert(e.message); }
+    await reload();
+  }
+  async function ventilerRow(n, body) {
+    try { await api(`/api/lignes/${n.id}/ventilation`, "POST", body); } catch (e) { alert(e.message); }
+    await reload();
+  }
+  function menuPoste1(n) {
+    return [
+      { label: "✚ Ajouter un sous-détail", fn: () => modalSousDetail(n) },
+      { label: "⧉ Dupliquer", fn: async () => { await api(`/api/lignes/${n.id}/dupliquer`, "POST"); await reload(); } },
+      "-",
+      { label: "🗺 Tout affecter en région", fn: () => ventilerRow(n, { mode: "tout_en" }) },
+      { label: "🗺 Tout affecter en France (hors région)", fn: () => ventilerRow(n, { mode: "tout_hors" }) },
+      { label: "🗺 Tout affecter à l'étranger", fn: () => ventilerRow(n, { mode: "tout_etranger" }) },
+      { label: "🗺 Ventiler en région…", fn: () => modalVentiler(n) },
+      "-",
+      {
+        label: "🗑 Supprimer", danger: true,
+        fn: async () => {
+          if (!confirm(`Supprimer « ${n.libelle} » ? Action définitive.`)) return;
+          await api(`/api/lignes/${n.id}`, "DELETE");
+          await reload();
+        },
+      },
+    ];
+  }
+
+  app.append(el("p", { class: "hint", text: "Page 1 « Droits artistiques » — comme l’onglet Excel « 1.Droits artistiques » : colonne « En région » = G, « France » = H, « Total » = I = G + H (+ étranger). Sur une ligne vide, saisissez G et/ou H : le total se calcule tout seul. Sur une ligne avec un total saisi, G + H + étranger ne doit pas le dépasser (le reliquat reste « à ventiler »)." }));
+
+  const wrap = el("div", { class: "table-wrap" });
+  const table = el("table", { class: "devis poste1" });
+  table.append(el("thead", {}, el("tr", {},
+    el("th", { text: "Code" }), el("th", { text: "Libellé" }),
+    el("th", { class: "num", text: "En région (€) — G" }), el("th", { class: "num", text: "France (€) — H" }),
+    el("th", { class: "num", text: "Étranger (€)" }), el("th", { class: "num", text: "Total (€) — I" }),
+    el("th", { class: "num", text: "À ventiler" }), el("th", { text: "Actions", style: "text-align:right" }))));
+  const tbody = el("tbody");
+  table.append(tbody);
+  wrap.append(table);
+  app.append(wrap);
+
+  function ventTd(n, champ, editable) {
+    if (!editable) {
+      const val = n[champ] || 0;
+      return el("td", { class: "num", text: val ? fmt(val) : "—" });
+    }
+    const inp = el("input", { class: "cell num", style: "width:110px", value: n[champ] ? fmtPlain(n[champ]) : "" });
+    inp.setAttribute("data-vent", champ);
+    inp.addEventListener("change", async () => {
+      const body = { mode: "partiel" };
+      for (const c of ["en_region", "hors_region", "etranger"]) {
+        const other = inp.parentElement.parentElement.querySelector(`input[data-vent="${c}"]`);
+        body[c] = other ? parseNum(other.value) : null;
+      }
+      if (body.en_region === null && body.hors_region === null && body.etranger === null) return;
+      await ventilerRow(n, body);
+    });
+    return el("td", { class: "num" }, inp);
+  }
+  function aVentilerTd(n) {
+    return el("td", { class: "num", style: n.a_ventiler ? "color:var(--hyp)" : "", text: n.a_ventiler ? fmt(n.a_ventiler) : "—" });
+  }
+  function actionsTd(n) {
+    return el("td", { class: "actions-cell" },
+      el("button", { class: "menu-btn", text: "⋯", onclick: (e) => { e.stopPropagation(); openMenu(e.currentTarget, menuPoste1(n)); } }));
+  }
+
+  function walk(nodes, prof) {
+    for (const n of nodes) {
+      const kids = n.children || [];
+      const tr = el("tr", { class: n.type, "data-id": n.id });
+      tr.append(el("td", { class: "code", text: n.chemin || n.code || "" }));
+      if (!kids.length) {
+        const lib = el("input", { class: "cell", value: n.libelle, style: "min-width:220px" });
+        lib.addEventListener("change", () => saveLigne(n.id, { libelle: lib.value }));
+        tr.append(el("td", { style: "padding-left:" + prof * 16 + "px" }, lib));
+        tr.append(ventTd(n, "en_region", true), ventTd(n, "hors_region", true), ventTd(n, "etranger", true));
+        const tot = el("input", { class: "cell num", style: "width:120px", value: n.montant_forfait != null ? fmtPlain(n.montant_forfait) : (n.montant ? fmtPlain(n.montant) : ""), placeholder: "I = G+H" });
+        tot.addEventListener("change", () => saveLigne(n.id, { montant_forfait: parseNum(tot.value) }));
+        tr.append(el("td", { class: "num" }, tot));
+        tr.append(aVentilerTd(n), actionsTd(n));
+      } else {
+        tr.append(el("td", { style: "padding-left:" + prof * 16 + "px", text: n.libelle }));
+        tr.append(ventTd(n, "en_region", false), ventTd(n, "hors_region", false), ventTd(n, "etranger", false));
+        tr.append(el("td", { class: "montant calcule num", text: fmt(n.montant) }));
+        tr.append(el("td", { class: "num" }), aVentilerTd(n), actionsTd(n));
+        tbody.append(tr);
+        walk(kids, prof + 1);
+        continue;
+      }
+      tbody.append(tr);
+    }
+  }
+  walk(poste.children || [], 1);
+
+  tbody.append(el("tr", { class: "poste" },
+    el("td", { class: "code", text: "1." }), el("td", { text: "TOTAL POSTE 1 — DROITS ARTISTIQUES" }),
+    el("td", { class: "num", text: fmt(poste.en_region) }), el("td", { class: "num", text: fmt(poste.hors_region) }),
+    el("td", { class: "num", text: fmt(poste.etranger || 0) }), el("td", { class: "montant num", text: fmt(poste.montant) }),
+    el("td", { class: "num", text: fmt(poste.a_ventiler) }), el("td", {})));
 }
 
 function modalAjouterLigne() {

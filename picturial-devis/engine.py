@@ -62,9 +62,10 @@ def ajouter_ligne(conn, film_id, parent_id, type_ligne="ligne", libelle="", quan
     lid = __import__("db").new_id()
     conn.execute(
         "INSERT INTO lignes (id, film_id, parent_id, type, code, libelle, quantite, unite, cout_unitaire,"
-        " montant_forfait, note, ordre, en_region, hors_region, ht, phase) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,0,?,?)",
+        " montant_forfait, montant_saisi, note, ordre, en_region, hors_region, ht, phase) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,?,?)",
         (lid, film_id, parent_id, type_ligne, code, libelle, quantite, unite, cout_unitaire,
-         r2(montant_forfait) if montant_forfait is not None else None, note,
+         r2(montant_forfait) if montant_forfait is not None else None,
+         1 if montant_forfait is not None else 0, note,
          _ordre_suivant(conn, film_id, parent_id), 1 if ht else 0, phase),
     )
     conn.commit()
@@ -81,6 +82,9 @@ def modifier_ligne(conn, ligne_id, champs):
             continue
         if k in ("cout_unitaire", "montant_forfait"):
             v = r2(v) if v not in (None, "") else None
+        if k == "montant_forfait":
+            # un forfait saisi explicitement devient la source de vérité (non dérivé de la ventilation)
+            conn.execute("UPDATE lignes SET montant_saisi=? WHERE id=?", (1 if v is not None else 0, ligne_id))
         if k == "quantite":
             v = None if v in (None, "") else float(v)
         if k == "ht":
@@ -114,14 +118,15 @@ def dupliquer_ligne(conn, ligne_id):
         raise Erreur("Ligne introuvable.", 404)
 
     def copie(old_id, new_parent):
-        s = conn.execute("SELECT * FROM lignes WHERE id=?", (old_id,)).fetchone()
+        s = dict(conn.execute("SELECT * FROM lignes WHERE id=?", (old_id,)).fetchone())
         nid = __import__("db").new_id()
         conn.execute(
             "INSERT INTO lignes (id, film_id, parent_id, type, code, libelle, quantite, unite, cout_unitaire,"
-            " montant_forfait, note, ordre, en_region, hors_region, etranger, ht, phase, regle, technicien_id)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " montant_forfait, montant_saisi, note, ordre, en_region, hors_region, etranger, ht, phase, regle, technicien_id)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (nid, s["film_id"], new_parent, s["type"], s["code"], s["libelle"] + " (copie)", s["quantite"],
-             s["unite"], s["cout_unitaire"], s["montant_forfait"], s["note"], _ordre_suivant(conn, s["film_id"], new_parent),
+             s["unite"], s["cout_unitaire"], s["montant_forfait"], s.get("montant_saisi", 0), s["note"],
+             _ordre_suivant(conn, s["film_id"], new_parent),
              s["en_region"], s["hors_region"], s.get("etranger", 0), s["ht"], s["phase"], s.get("regle", ""), None),
         )
         for c in conn.execute("SELECT id FROM lignes WHERE parent_id=? ORDER BY ordre", (old_id,)).fetchall():
@@ -161,9 +166,9 @@ def ajouter_sous_detail(conn, film_id, parent_id, libelle="", quantite=None, uni
         if reprendre:
             montant_forfait = forfait if montant_forfait is None else montant_forfait
             note = (note + " " if note else "") + f"Estimation initiale de {fmt_fr(forfait)} reprise comme sous-détail."
-            conn.execute("UPDATE lignes SET montant_forfait=NULL WHERE id=?", (parent_id,))
+            conn.execute("UPDATE lignes SET montant_forfait=NULL, montant_saisi=0 WHERE id=?", (parent_id,))
         else:
-            conn.execute("UPDATE lignes SET montant_forfait=NULL, note=? WHERE id=?",
+            conn.execute("UPDATE lignes SET montant_forfait=NULL, montant_saisi=0, note=? WHERE id=?",
                          ((parent["note"] + " " if parent["note"] else "") +
                           f"Estimation initiale de {fmt_fr(forfait)} remplacée par le sous-détail.", parent_id))
     return ajouter_ligne(conn, film_id, parent_id, type_ligne="detail", libelle=libelle, quantite=quantite,
@@ -359,10 +364,10 @@ def ajouter_technicien(conn, film_id, parent_id, fonction_id, nom="", salaire=No
                 ajouter_ligne(conn, film_id, parent_id, type_ligne="detail",
                               libelle=f"Estimation initiale reprise ({fmt_fr(estimation)})",
                               montant_forfait=r2(estimation), unite="forfait", ht=True)
-                conn.execute("UPDATE lignes SET montant_forfait=NULL, quantite=NULL, cout_unitaire=NULL WHERE id=?",
+                conn.execute("UPDATE lignes SET montant_forfait=NULL, montant_saisi=0, quantite=NULL, cout_unitaire=NULL WHERE id=?",
                              (parent_id,))
             else:
-                conn.execute("UPDATE lignes SET montant_forfait=NULL, quantite=NULL, cout_unitaire=NULL, note=? WHERE id=?",
+                conn.execute("UPDATE lignes SET montant_forfait=NULL, montant_saisi=0, quantite=NULL, cout_unitaire=NULL, note=? WHERE id=?",
                              ((parent["note"] + " " if parent["note"] else "") +
                               f"Estimation initiale de {fmt_fr(estimation)} remplacée par l'engagement.", parent_id))
     unite_ref = fonc["unite"]
@@ -639,8 +644,15 @@ def set_ventilation(conn, film_id, ligne_id, mode="partiel", en_region=None, hor
             et = r2(etranger) if etranger is not None else 0.0
             if en_region is None and hors_region is None and etranger is None:
                 hors = r2(m - en - et)
-            if r2(en + hors + et) > r2(m + 0.005):
-                raise Erreur(f"En région + hors région + étranger ({fmt_fr(en + hors + et)}) dépasse le montant de la ligne ({fmt_fr(m)}).")
+            # Saisie façon modèle Excel (onglets de détail : G = en région, H = France, I = G+H) :
+            # sur une ligne sans montant saisi explicitement (ni forfait, ni qté × coût), G/H/étranger
+            # sont les inputs et le montant forfaitaire est dérivé de la ventilation (I = G + H).
+            sans_source = f["quantite"] is None and not f.get("montant_saisi")
+            if en_region is not None or hors_region is not None or etranger is not None:
+                if not sans_source and r2(en + hors + et) > r2(m + 0.005):
+                    raise Erreur(f"En région + hors région + étranger ({fmt_fr(en + hors + et)}) dépasse le montant de la ligne ({fmt_fr(m)}).")
+                if sans_source:
+                    conn.execute("UPDATE lignes SET montant_forfait=? WHERE id=?", (r2(en + hors + et), f["id"]))
             conn.execute("UPDATE lignes SET en_region=?, hors_region=?, etranger=? WHERE id=?", (en, hors, et, f["id"]))
         else:
             en_total = r2(en_region) if en_region is not None else 0.0
@@ -760,11 +772,11 @@ def dupliquer_film(conn, film_id):
         mapping[old_id] = nid
         conn.execute(
             "INSERT INTO lignes (id, film_id, parent_id, type, code, libelle, quantite, unite, cout_unitaire,"
-            " montant_forfait, note, ordre, en_region, hors_region, etranger, ht, phase, regle, technicien_id)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
+            " montant_forfait, montant_saisi, note, ordre, en_region, hors_region, etranger, ht, phase, regle, technicien_id)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
             (nid, nouveau_id, new_parent, s["type"], s["code"], s["libelle"], s["quantite"], s["unite"],
-             s["cout_unitaire"], s["montant_forfait"], s["note"], s["ordre"], s["en_region"], s["hors_region"],
-             s.get("etranger", 0), s["ht"], s["phase"], s.get("regle", "")))
+             s["cout_unitaire"], s["montant_forfait"], s.get("montant_saisi", 0), s["note"], s["ordre"], s["en_region"],
+             s["hors_region"], s.get("etranger", 0), s["ht"], s["phase"], s.get("regle", "")))
         for c in conn.execute("SELECT id FROM lignes WHERE film_id=? AND parent_id=? ORDER BY ordre", (film_id, old_id)):
             copie(c["id"], nid)
     for r in conn.execute("SELECT id FROM lignes WHERE film_id=? AND parent_id IS NULL ORDER BY ordre", (film_id,)):
@@ -826,10 +838,11 @@ def restaurer_projet(conn, data):
         mapping[l["id"]] = nid
         conn.execute(
             "INSERT INTO lignes (id, film_id, parent_id, type, code, libelle, quantite, unite, cout_unitaire,"
-            " montant_forfait, note, ordre, en_region, hors_region, etranger, ht, phase, regle, technicien_id)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " montant_forfait, montant_saisi, note, ordre, en_region, hors_region, etranger, ht, phase, regle, technicien_id)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (nid, nouveau_id, mapping.get(l.get("parent_id")), l["type"], l.get("code", ""), l["libelle"],
              l.get("quantite"), l.get("unite", "forfait"), l.get("cout_unitaire"), l.get("montant_forfait"),
+             l.get("montant_saisi", 1 if l.get("montant_forfait") is not None else 0),
              l.get("note", ""), l.get("ordre", 0), l.get("en_region", 0), l.get("hors_region", 0),
              l.get("etranger", 0), l.get("ht", 1), l.get("phase", ""), l.get("regle", ""), None))
     for l in data.get("lignes", []):

@@ -527,5 +527,67 @@ class Page2PersonnelTest(unittest.TestCase):
         self.assertEqual(self._poste2()["montant"], 900.0 + 500.0 + 360.0)
 
 
+class Page1DroitsTest(unittest.TestCase):
+    """Page 1 « Droits artistiques » : saisie façon onglet Excel (G/H en inputs, I = G+H dérivé)."""
+
+    def setUp(self):
+        self.conn, self.tmp = nouveau_contexte()
+        self.film_id = db.creer_film(self.conn, "Film page 1", frais_generaux=False)
+
+    def test_ventilation_derive_le_total_quand_ligne_vide(self):
+        id_11 = ligne_par_code(self.conn, self.film_id, "11")
+        # ligne vide : saisir H = 80 000 € (colonne H du modèle) -> le total I se calcule tout seul
+        engine.set_ventilation(self.conn, self.film_id, id_11, mode="partiel", hors_region=80000.0)
+        calc = engine.compute_film(self.conn, self.film_id)
+        n = next(x for x in _iter(calc["arbre"]) if x["code"] == "11")
+        self.assertEqual(n["montant"], 80000.0)
+        self.assertEqual((n["en_region"], n["hors_region"], n["a_ventiler"]), (0.0, 80000.0, 0.0))
+        # puis G = 20 000 € en plus -> total 100 000 € (I = G + H à chaque saisie)
+        engine.set_ventilation(self.conn, self.film_id, id_11, mode="partiel", en_region=20000.0, hors_region=80000.0)
+        calc = engine.compute_film(self.conn, self.film_id)
+        n = next(x for x in _iter(calc["arbre"]) if x["code"] == "11")
+        self.assertEqual(n["montant"], 100000.0)
+        self.assertEqual((n["en_region"], n["hors_region"]), (20000.0, 80000.0))
+
+    def test_total_saisi_explicitement_borne_la_ventilation(self):
+        id_12 = ligne_par_code(self.conn, self.film_id, "12")
+        engine.modifier_ligne(self.conn, id_12, {"montant_forfait": 60000.0})
+        engine.set_ventilation(self.conn, self.film_id, id_12, mode="partiel", hors_region=60000.0)
+        # une fois le total saisi, G + H + étranger ne doit pas le dépasser
+        with self.assertRaises(engine.Erreur):
+            engine.set_ventilation(self.conn, self.film_id, id_12, mode="partiel", en_region=1000.0, hors_region=60000.0)
+        calc = engine.compute_film(self.conn, self.film_id)
+        n = next(x for x in _iter(calc["arbre"]) if x["code"] == "12")
+        self.assertEqual((n["montant"], n["hors_region"], n["a_ventiler"]), (60000.0, 60000.0, 0.0))
+        # effacer le total -> retour en mode dérivé
+        engine.modifier_ligne(self.conn, id_12, {"montant_forfait": None})
+        engine.set_ventilation(self.conn, self.film_id, id_12, mode="partiel", en_region=10000.0, hors_region=60000.0)
+        calc = engine.compute_film(self.conn, self.film_id)
+        n = next(x for x in _iter(calc["arbre"]) if x["code"] == "12")
+        self.assertEqual(n["montant"], 70000.0)
+
+    def test_ligne_qte_cout_jamais_derivee(self):
+        id_71 = ligne_par_code(self.conn, self.film_id, "71")
+        cam = engine.ajouter_ligne(self.conn, self.film_id, id_71, type_ligne="ligne", libelle="Location caméra", unite="forfait")
+        d1 = engine.ajouter_sous_detail(self.conn, self.film_id, cam, libelle="Corps caméra",
+                                        quantite=5, unite="jour", cout_unitaire=120.0, reprendre=None)
+        engine.set_ventilation(self.conn, self.film_id, d1, mode="partiel", en_region=600.0)
+        with self.assertRaises(engine.Erreur):
+            engine.set_ventilation(self.conn, self.film_id, d1, mode="partiel", en_region=700.0)
+        calc = engine.compute_film(self.conn, self.film_id)
+        n = next(x for x in _iter(calc["arbre"]) if x["id"] == d1)
+        self.assertEqual((n["montant"], n["en_region"]), (600.0, 600.0))
+
+    def test_dupliquer_ligne_repare(self):
+        # régression : dupliquer_ligne plantait (sqlite3.Row sans .get)
+        id_11 = ligne_par_code(self.conn, self.film_id, "11")
+        engine.modifier_ligne(self.conn, id_11, {"montant_forfait": 100.0})
+        nid = engine.dupliquer_ligne(self.conn, id_11)
+        row = self.conn.execute("SELECT * FROM lignes WHERE id=?", (nid,)).fetchone()
+        self.assertEqual(row["montant_forfait"], 100.0)
+        self.assertEqual(row["montant_saisi"], 1)
+        self.assertIn("(copie)", row["libelle"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

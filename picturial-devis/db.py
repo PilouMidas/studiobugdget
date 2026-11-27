@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS lignes (
     unite TEXT DEFAULT 'forfait',
     cout_unitaire REAL,
     montant_forfait REAL,
+    montant_saisi INTEGER NOT NULL DEFAULT 0,
     note TEXT DEFAULT '',
     ordre REAL NOT NULL DEFAULT 0,
     en_region REAL NOT NULL DEFAULT 0,
@@ -547,6 +548,10 @@ def _migrer(conn):
         conn.execute("ALTER TABLE lignes ADD COLUMN etranger REAL NOT NULL DEFAULT 0")
     if "regle" not in cols:
         conn.execute("ALTER TABLE lignes ADD COLUMN regle TEXT DEFAULT ''")
+    if "montant_saisi" not in cols:
+        conn.execute("ALTER TABLE lignes ADD COLUMN montant_saisi INTEGER NOT NULL DEFAULT 0")
+        # les forfaits existants ont été saisis explicitement : ils restent la source de vérité
+        conn.execute("UPDATE lignes SET montant_saisi=1 WHERE montant_forfait IS NOT NULL")
     cols_f = {r["name"] for r in conn.execute("PRAGMA table_info(films)")}
     if "taux_charges" not in cols_f:
         conn.execute("ALTER TABLE films ADD COLUMN taux_charges REAL NOT NULL DEFAULT 0.57")

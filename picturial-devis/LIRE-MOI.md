@@ -12,15 +12,27 @@ double-clic, macOS peut afficher « Ouvrir le devis.command n'a pas pu être ouv
 n'a pas pu confirmer qu'il ne contient pas de logiciel malveillant ». **C'est normal pour
 tout logiciel non signé Apple.** Deux solutions, au choix :
 
+### Méthode 1 — la plus fiable : lancer via le Terminal (aucun déblocage requis)
+1. Ouvrez **Terminal** (Cmd + Espace, tapez « terminal », Entrée).
+2. Tapez `bash ` (avec un espace à la fin), puis **faites glisser le fichier
+   `Ouvrir le devis.command`** dans la fenêtre du Terminal : son chemin se remplit tout seul.
+3. Appuyez sur **Entrée**. Le serveur démarre et le navigateur s'ouvre tout seul.
+   (Astuce : vous pouvez faire la même chose en glissant le dossier entier et en tapant
+   `bash "picturial-devis/Ouvrir le devis.command"`.)
+
+### Méthode 2 — débloquer le fichier pour le double-clic
 1. **Clic droit (ou Ctrl+clic)** sur `Ouvrir le devis.command` → **« Ouvrir »** → cliquez
    « Ouvrir » dans la boîte de dialogue. macOS mémorisera ensuite le déblocage.
+   (Sur macOS récent, l'option peut aussi apparaître en bas de
+   **Réglages Système → Confidentialité et sécurité → « Ouvrir quand même »**.)
 2. **Ou en une commande dans le Terminal** (une seule fois, après décompression) :
    ```
    xattr -dr com.apple.quarantine "/chemin/vers/le/dossier/picturial-devis"
    ```
-   (adaptez le chemin ; gardez les guillemets s'il contient des espaces ou des accents).
+   (adaptez le chemin — par ex. `~/Téléchargements/picturial-devis` ; gardez les guillemets
+   s'il contient des espaces ou des accents).
 
-Sans cette étape, macOS propose uniquement « Placer dans la corbeille » / « Terminé ».
+Sans cette étape, le double-clic affiche uniquement « Placer dans la corbeille » / « Terminé ».
 
 ## Ouvrir le logiciel (Mac)
 

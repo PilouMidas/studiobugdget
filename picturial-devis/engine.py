@@ -279,10 +279,8 @@ def compute_film(conn, film_id):
 
     # codes d'affichage et infos techniciens
     def annote(n, prefix, index, parent_path):
-        if n["type"] in ("poste", "rubrique"):
-            path = f"{prefix}{n['code']}" if n["code"] else prefix
-        else:
-            path = f"{parent_path}.{index}"
+        # un code existe -> affiché tel quel (11., 1411., 237. comme dans le modèle Excel)
+        path = n["code"] if n["code"] else (f"{parent_path}.{index}" if parent_path else str(index))
         n["chemin"] = path
         t = tech_by_ligne.get(n["id"])
         n["technicien"] = dict(t) if t else None

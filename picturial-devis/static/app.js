@@ -431,6 +431,26 @@ function renderDevis() {
   app.append(wrap);
 
   const uniteOptions = state.referentiel.unites;
+  function ventCell(n, champ, estParent) {
+    // feuille : saisie directe comme les colonnes G/H du modèle Excel ; parent : somme en lecture seule
+    if (estParent) {
+      const v = n[champ] || 0;
+      return el("td", { class: "num", text: v ? fmt(v) : "—" });
+    }
+    const inp = el("input", { class: "cell num", style: "width:100px", value: n[champ] ? fmtPlain(n[champ]) : "" });
+    inp.addEventListener("change", async () => {
+      const body = { mode: "partiel" };
+      for (const c of ["en_region", "hors_region", "etranger"]) {
+        const elInput = inp.parentElement.parentElement.querySelector(`input[data-vent="${c}"]`);
+        body[c] = elInput ? parseNum(elInput.value) : (c === champ ? parseNum(inp.value) : null);
+      }
+      if (body.en_region === null && body.hors_region === null && body.etranger === null) { renderDevis(); return; }
+      try { await api(`/api/lignes/${n.id}/ventilation`, "POST", body); await loadDevis(); renderDevis(); }
+      catch (e) { alert(e.message); renderDevis(); }
+    });
+    inp.setAttribute("data-vent", champ);
+    return el("td", { class: "num" }, inp);
+  }
   function rowFor(n, prof) {
     const tr = el("tr", { class: n.type, "data-id": n.id });
     const hasKids = n.children && n.children.length > 0;
@@ -467,9 +487,7 @@ function renderDevis() {
       el("td", {}, unite),
       el("td", { class: "num" }, (n.montant_forfait != null && !hasKids) ? forfait : pu),
       montantTd,
-      el("td", { class: "num", text: n.en_region ? fmt(n.en_region) : "—" }),
-      el("td", { class: "num", text: n.hors_region ? fmt(n.hors_region) : "—" }),
-      el("td", { class: "num", text: n.etranger ? fmt(n.etranger) : "—" }),
+      ventCell(n, "en_region", hasKids), ventCell(n, "hors_region", hasKids), ventCell(n, "etranger", hasKids),
       el("td", { class: "num", style: n.a_ventiler ? "color:var(--hyp)" : "", text: n.a_ventiler ? fmt(n.a_ventiler) : "—" }),
     );
     const note = el("input", { class: "cell", value: n.note, style: "min-width:120px" });

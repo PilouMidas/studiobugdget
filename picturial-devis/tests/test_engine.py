@@ -578,6 +578,19 @@ class Page1DroitsTest(unittest.TestCase):
         n = next(x for x in _iter(calc["arbre"]) if x["id"] == d1)
         self.assertEqual((n["montant"], n["en_region"]), (600.0, 600.0))
 
+    def test_aucun_code_invente_pour_ligne_sans_code(self):
+        id_14 = ligne_par_code(self.conn, self.film_id, "14")
+        d = engine.ajouter_sous_detail(self.conn, self.film_id, id_14,
+                                      libelle="Droits Vladimir Cosma — musique originale",
+                                      montant_forfait=15000.0, unite="forfait", reprendre=None)
+        calc = engine.compute_film(self.conn, self.film_id)
+        n = next(x for x in _iter(calc["arbre"]) if x["id"] == d)
+        self.assertEqual(n["chemin"], "")   # pas de « 1.41 » / « 1.10 » inventé
+        self.assertEqual(n["code"], "")
+        self.assertEqual(n["montant"], 15000.0)
+        rub = next(x for x in _iter(calc["arbre"]) if x["code"] == "14")
+        self.assertEqual(rub["montant"], 15000.0)  # le total de la rubrique suit
+
     def test_dupliquer_ligne_repare(self):
         # régression : dupliquer_ligne plantait (sqlite3.Row sans .get)
         id_11 = ligne_par_code(self.conn, self.film_id, "11")

@@ -26,6 +26,7 @@ function el(tag, attrs, ...children) {
     else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
     else if (k === "value") e.value = v;
     else if (k === "checked") e.checked = !!v;
+    else if (k === "selected") e.selected = !!v;
     else e.setAttribute(k, v);
   }
   for (const c of children.flat(9)) {
@@ -353,7 +354,7 @@ function renderDevis() {
     el("div", {}, el("div", { class: "big", text: fmt(t.etranger || 0) }), el("div", { class: "lbl", text: "Étranger" })),
     el("div", {}, el("div", { class: "big", text: fmt(t.a_ventiler) }), el("div", { class: "lbl", text: "À ventiler" })),
     el("div", { class: "spacer" }),
-    el("button", { class: "primary", text: "＋ Ajouter une ligne", onclick: () => modalAjouterLigne() }),
+    el("button", { class: "primary", text: state.posteFilter ? "＋ Ajouter une ligne dans ce poste" : "＋ Ajouter une ligne", onclick: () => modalAjouterLigne() }),
     (() => { const sel = el("select", { class: "cell", style: "min-width:240px" });
       sel.append(el("option", { value: "", text: "Vue : tous les postes", selected: !state.posteFilter }));
       for (const r of d.arbre) if (r.type === "poste") sel.append(el("option", { value: r.id, text: `${r.code}. ${r.libelle}`, selected: state.posteFilter === r.id }));
@@ -365,10 +366,10 @@ function renderDevis() {
   );
   app.append(bar);
   const leg = el("p", { class: "legend" });
-  leg.append("Légende : ", el("span", { class: "m-saisi", text: "montant saisi" }), " · ",
-    el("span", { class: "m-calcule", text: "montant calculé" }), " · ",
+  leg.append("Légende : ", el("span", { class: "m-saisi", text: "noir gras = montant saisi (modifiable)" }), " · ",
+    el("span", { class: "m-calcule", text: "bleu = montant calculé automatiquement" }), " · ",
     el("span", { class: "m-hyp", text: "⚠ hypothèse à vérifier" }),
-    " — le total d’une ligne détaillée est la somme de ses sous-détails.");
+    " — le total d’une ligne détaillée (rubrique) est la somme de ses sous-lignes et n’est pas modifiable directement. Le bouton ⋯ à droite de chaque ligne ouvre ses actions : ajouter un sous-détail, ventiler (région / France / étranger), dupliquer, déplacer, supprimer.");
   app.append(leg);
 
   // Pages dédiées façon onglets du modèle Excel : poste 1 (Droits artistiques) et poste 2 (Personnel)
@@ -749,6 +750,7 @@ function renderPoste1View(d, poste) {
   }
 
   app.append(el("p", { class: "hint", text: "Page 1 « Droits artistiques » — comme l’onglet Excel « 1.Droits artistiques » : colonne « En région » = G, « France » = H, « Total » = I = G + H (+ étranger). Sur une ligne vide, saisissez G et/ou H : le total se calcule tout seul. Sur une ligne avec un total saisi, G + H + étranger ne doit pas le dépasser (le reliquat reste « à ventiler »)." }));
+  app.append(el("p", { class: "legend", text: "Légende : noir gras = montant saisi (modifiable) · bleu = calculé automatiquement (total de la rubrique 14 = somme de 1411 + 1412, non modifiable) · « À ventiler » = part pas encore affectée région/France/étranger · ⋯ = actions de la ligne (sous-détail, ventiler, dupliquer, supprimer…). Pour chiffrer un droit, éditez directement la ligne existante (ex. 1412 Droits synchro) ou ajoutez un sous-détail sous la rubrique 14 — aucun code n’est inventé." }));
 
   const wrap = el("div", { class: "table-wrap" });
   const table = el("table", { class: "devis poste1" });
@@ -825,14 +827,16 @@ function renderPoste1View(d, poste) {
 
 function modalAjouterLigne() {
   const d = state.devis;
+  // poste filtré actif -> la nouvelle ligne est proposée dans ce poste (et son sous-arbre)
+  const racine = state.posteFilter ? d.arbre.find((r) => r.id === state.posteFilter) : null;
   const cibles = [];
   (function walk(nodes, prof) {
     for (const x of nodes) {
-      if (["poste", "rubrique", "ligne"].includes(x.type)) cibles.push({ id: x.id, label: "　".repeat(prof) + (x.chemin || x.code) + " — " + x.libelle });
+      if (["poste", "rubrique", "ligne"].includes(x.type)) cibles.push({ id: x.id, label: "　".repeat(prof) + (x.chemin || x.code || "") + " — " + x.libelle });
       if (x.children) walk(x.children, prof + 1);
     }
-  })(d.arbre, 0);
-  openModal("Ajouter une ligne budgétaire", (content, actions, close) => {
+  })(racine ? [racine] : d.arbre, 0);
+  openModal(racine ? `Ajouter une ligne dans « ${racine.chemin || racine.code} ${racine.libelle} »` : "Ajouter une ligne budgétaire", (content, actions, close) => {
     const sel = el("select", { style: "width:100%" });
     for (const c of cibles) sel.append(el("option", { value: c.id, text: c.label }));
     const lib = el("input", { style: "width:100%", placeholder: "Intitulé (ex. Location caméra)" });

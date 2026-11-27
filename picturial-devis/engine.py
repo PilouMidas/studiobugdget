@@ -284,9 +284,9 @@ def compute_film(conn, film_id):
 
     # codes d'affichage et infos techniciens
     def annote(n, prefix, index, parent_path):
-        # un code existe -> affiché tel quel (11., 1411., 237. comme dans le modèle Excel)
-        path = n["code"] if n["code"] else (f"{parent_path}.{index}" if parent_path else str(index))
-        n["chemin"] = path
+        # Seul un code saisi dans la nomenclature est affiché tel quel (11., 1411., 237. comme dans
+        # le modèle Excel) : jamais de code inventé (pas de « 1.10 ») pour une ligne sans code.
+        n["chemin"] = n["code"] or ""
         t = tech_by_ligne.get(n["id"])
         n["technicien"] = dict(t) if t else None
         if t:
@@ -301,7 +301,7 @@ def compute_film(conn, film_id):
                 n.setdefault("flags", []).append("hypothèse manuelle")
         i = 1
         for c in n["children"]:
-            annote(c, "", i, path)
+            annote(c, "", i, "")
             i += 1
     i = 1
     for r in roots:

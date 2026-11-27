@@ -15,10 +15,10 @@ Le ZIP livrable est `picturial-devis.zip` à la racine de la branche ; le code e
 sur Mac) : remplacer le dossier de l'application ne fait perdre aucun film. Ne jamais toucher à cette base autrement
 que via l'application.
 
-## Ce qui existe déjà (v2, testée, 29 tests OK)
+## Ce qui existe déjà (v2, testée, 33 tests OK)
 - Application web **100 % Python 3 standard** (aucune dépendance) : `server.py` (API JSON + statique),
   `engine.py` (moteur de calcul unique : arbre hiérarchique, arrondi au centime, propagation immédiate),
-  `db.py` (schéma SQLite + seeds), `static/` (UI vanilla JS), `xlsx_export.py`, `tests/` (29 tests).
+  `db.py` (schéma SQLite + seeds), `static/` (UI vanilla JS), `xlsx_export.py`, `tests/` (33 tests).
 - Lancement Mac : décompresser le ZIP, puis `Ouvrir le devis.command` (Gatekeeper : au premier lancement,
   soit clic droit → « Ouvrir », soit dans le Terminal `bash ` + glisser-déposer le fichier, soit
   `xattr -dr com.apple.quarantine "/chemin/picturial-devis"`). Le serveur écoute sur `127.0.0.1` (port libre auto),
@@ -40,12 +40,16 @@ que via l'application.
 ## Méthode de travail demandée par l'utilisateur : PAGE PAR PAGE
 On calque l'application sur le tableur Excel de l'utilisateur **onglet par onglet**, en commençant par le plus simple.
 - ✅ Page 1 « 1. Droits artistiques » : faite (codes 11.–19. + 1411./1412., ventilation directe dans les colonnes).
-- ⏭️ **Page 2 « 2. Personnel » : À FAIRE EN PRIORITÉ** — reproduire fidèlement l'onglet Excel `2.Personnel` :
-  par fonction (2311., 2321., … sous les rubriques 231.–239.), 3 phases Préparation/Tournage/Finition,
-  chacune avec Salaire × Jours (prépa/finition) ou Semaines (tournage), éclaté en deux blocs « Région » (colonnes G–P)
-  et « France » (R–AA), totaux P (brut région), AA (brut total), AB (P+AA), Q/AC (nb jours/semaines).
-  L'app a déjà le modèle « technicien = 3 phases » ; il faut vérifier que la vue poste 2 affiche ça de façon lisible
-  (tableau phases × région/France) et que la saisie colle à l'Excel.
+- ✅ **Page 2 « 2. Personnel » : faite** — nomenclature reproduisant fidèlement l'onglet Excel `2.Personnel`
+  (sous-postes 21.–29., rubriques 231.–272., fonctions 211.–291., codes Y/Z = renfort / heures supplémentaires) ;
+  vue dédiée du poste 2 en tableau phases × région/France : par fonction, 3 phases Préparation/Tournage/Finitions,
+  chacune avec salaire × jours/semaines, la colonne « En région » correspondant au bloc « Région » (G–P) du modèle
+  et « France hors rég. » au bloc « France » (R–AA), saisie directe dans les lignes ;
+  ajout d'un engagement directement sur une ligne fonction, avec fonction de barème suggérée (minimum CCNPC pré-rempli)
+  et choix explicite reprendre/remplacer si la ligne a déjà une estimation (jamais de double comptage) ;
+  nouvelle route `GET /api/films/<id>/personnel`.
+  Écart volontaire au modèle : l'onglet Excel duplique les codes 262/2621-2623 sous « 27. VFX Postprod » ;
+  l'app les renomme 272/2721-2723 pour garder des codes uniques (intitulés identiques).
 - Puis pages 3 (Interprétation), 5 (Décors et costumes), 6, 7, 8, 9.
 - Hors périmètre v2 (à prévoir plus tard, l'utilisateur l'a dit) : onglets « Scénario Live » et « Formulaire Dérogation »
   (critères n°1–5, ratios 18 %/80 %) du modèle.
@@ -73,6 +77,7 @@ On calque l'application sur le tableur Excel de l'utilisateur **onglet par ongle
 - Comportement Gatekeeper au premier lancement (procédure documentée dans `LIRE-MOI.md`).
 
 ## Questions ouvertes pour l'utilisateur (à lui poser si bloquant)
-- Page 2 Personnel : la vue par fonction avec phases × région/France suffit-elle, ou faut-il un tableau strictement
-  identique aux colonnes G–P / R–AA ?
+- Page 2 Personnel : question tranchée — la vue par fonction avec phases × région/France a été retenue (un seul
+  salaire par engagement ; la part région / France se saisit par montant sur chaque phase, totaux identiques au
+  modèle). Un tableau strictement identique aux colonnes G–P / R–AA reste envisageable en v3 si besoin.
 - Faut-il reprendre le bloc « scénario de réduction de la masse salariale » et le formulaire de dérogation dans une v3 ?

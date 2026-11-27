@@ -341,7 +341,8 @@ def tech_creer(h, m, q, body):
     with LOCK:
         tid = engine.ajouter_technicien(CONN, m.group(1), body.get("parent_id"), body.get("fonction_id"),
                                         nom=body.get("nom", ""), salaire=body.get("salaire"), unite=body.get("unite", "jour"),
-                                        phases=body.get("phases", []), hypothese_manuelle=bool(body.get("hypothese_manuelle")))
+                                        phases=body.get("phases", []), hypothese_manuelle=bool(body.get("hypothese_manuelle")),
+                                        reprendre=body.get("reprendre"))
         fiche = engine.fiche_technicien(CONN, tid)
     return {"id": tid, "fiche": fiche}, 201
 
@@ -363,6 +364,11 @@ def tech_modifier(h, m, q, body):
 @route("GET", r"/api/films/([0-9a-f]+)/region")
 def region_get(h, m, q, body):
     return engine.vue_region(CONN, m.group(1))
+
+
+@route("GET", r"/api/films/([0-9a-f]+)/personnel")
+def personnel_get(h, m, q, body):
+    return engine.vue_personnel(CONN, m.group(1))
 
 
 @route("POST", r"/api/films/([0-9a-f]+)/baremes/actualiser")

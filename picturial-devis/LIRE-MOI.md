@@ -79,6 +79,12 @@ Fermez le navigateur, éteignez le Mac, relancez le lendemain : le devis est ide
   colonnes région / France / étranger / à ventiler), **un onglet par poste** (1. … 9.), onglet
   « Ventilation territoriale ». Montants en cellules numériques.
 - Onglet Devis : **filtre par poste** (sélecteur « Poste : ») pour lire un poste comme un onglet du modèle.
+- **Poste 2 « Personnel » : vue dédiée** reproduisant l'onglet « 2.Personnel » du modèle : sous-postes 21.–29.,
+  rubriques 231.–272., fonctions 211.–291. ; par engagement, 3 phases Préparation/Tournage/Finitions avec
+  salaire × jours/semaines, ventilées en région (« En région » = bloc G–P du modèle) / France hors région
+  (bloc R–AA) directement dans les lignes. « Ajouter un technicien » se fait sur la ligne fonction elle-même,
+  avec la fonction de barème suggérée (minimum pré-rempli) ; si la ligne a déjà une estimation, choix explicite
+  « reprendre / remplacer » (aucun double comptage).
 - Les originaux de vos documents sont conservés en lecture seule dans `picturial-devis/modeles/`.
 - « Scénario Live » et « Formulaire Dérogation » : non repris en v2 (hors périmètre demandé) ;
   la duplication de projet joue le rôle de « scénario alternatif ».
@@ -136,7 +142,7 @@ L'arbre est **replié par défaut** : cliquez les ▸/▾ pour déplier/replier,
 
 ## Tests exécutés (dans l'environnement de développement, Linux + Python 3.12)
 
-- `python3 -m unittest discover -s tests` : **29 tests OK** (recette v1 + v2 : import des 429 minimas CCNPC vérifiés, nomenclature CNC, charges poste 4 à 57 %, FG 7 % / imprévus 3 %, ventilation étranger, recette complète 1750/700/2450 € → 3800 €), couvrant la recette complète
+- `python3 -m unittest discover -s tests` : **33 tests OK** (recette v1 + v2 : import des 429 minimas CCNPC vérifiés, nomenclature CNC, charges poste 4 à 57 %, FG 7 % / imprévus 3 %, ventilation étranger, recette complète 1750/700/2450 € → 3800 €), couvrant la recette complète
   (technicien 250 €/jour × 2 j prépa + 5 j tournage → 1 750 € brut, 700 € charges, 2 450 € ;
   passage à 6 j → 2 000 € / 800 € / 2 800 €, hausse du total exactement 350 € ; location
   caméra 600 + 400 → 1 000 €, film 3 800 € ; ventilation 600/400 avec 2 800 € à ventiler,

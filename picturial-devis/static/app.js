@@ -371,6 +371,10 @@ function renderDevis() {
     " — le total d’une ligne détaillée est la somme de ses sous-détails.");
   app.append(leg);
 
+  // Page 2 « Personnel » : vue dédiée façon onglet « 2.Personnel » du modèle Excel
+  const posteSel = state.posteFilter ? d.arbre.find((r) => r.id === state.posteFilter) : null;
+  if (posteSel && posteSel.code === "2") return renderPersonnelView(d, posteSel);
+
   const parentMap = {};
   const depthMap = {};
   (function mapNodes(nodes, parent, depth) {
@@ -393,7 +397,7 @@ function renderDevis() {
   function menuItems(n) {
     const items = [];
     if (n.type !== "poste") items.push({ label: "✚ Ajouter un sous-détail", fn: () => modalSousDetail(n) });
-    if (["poste", "rubrique", "ligne"].includes(n.type)) items.push({ label: "👤 Ajouter un technicien", fn: () => modalTechnicien(n.id) });
+    if (["poste", "rubrique", "ligne", "detail"].includes(n.type)) items.push({ label: "👤 Ajouter un technicien", fn: () => modalTechnicien(n) });
     if (n.type === "poste") items.push({ label: "✚ Ajouter une rubrique", fn: () => modalNouvelleLigne(n, "rubrique") });
     if (n.type === "poste" || n.type === "rubrique") items.push({ label: "✚ Ajouter une ligne budgétaire", fn: () => modalNouvelleLigne(n, "ligne") });
     if (n.type === "poste") items.push({ label: "✚ Ajouter un grand poste", fn: () => modalNouvelleLigne(null, "poste") });
@@ -524,6 +528,190 @@ function renderDevis() {
     }
   }
   applyVisibility(d.arbre);
+}
+
+/* ---------------- page 2 « Personnel » (vue façon onglet Excel « 2.Personnel ») ---------------- */
+
+async function renderPersonnelView(d, poste) {
+  try {
+    let v;
+    try { v = await api(`/api/films/${state.filmId}/personnel`); }
+    catch (e) { app.append(el("div", { class: "banner", text: "Erreur : " + e.message })); return; }
+
+    async function reload() { await loadDevis(); renderDevis(); }
+    async function saveLigne(id, champs) {
+      try { await api(`/api/lignes/${id}`, "PUT", champs); } catch (e) { alert(e.message); }
+      await reload();
+    }
+    async function ventilerRow(n, body) {
+      try { await api(`/api/lignes/${n.id}/ventilation`, "POST", body); } catch (e) { alert(e.message); }
+      await reload();
+    }
+    function menuPersonnel(n, extra) {
+      const items = extra || [];
+      if (n.technicien) items.push({ label: "👤 Ouvrir l’engagement (tarif, durées)", fn: () => modalOuvrirTechnicien(n.technicien.id) });
+      items.push({ label: "⧉ Dupliquer", fn: async () => { await api(`/api/lignes/${n.id}/dupliquer`, "POST"); await reload(); } });
+      items.push("-");
+      items.push({ label: "🗺 Tout affecter en région", fn: () => ventilerRow(n, { mode: "tout_en" }) });
+      items.push({ label: "🗺 Tout affecter en France (hors région)", fn: () => ventilerRow(n, { mode: "tout_hors" }) });
+      items.push({ label: "🗺 Tout affecter à l'étranger", fn: () => ventilerRow(n, { mode: "tout_etranger" }) });
+      items.push({ label: "🗺 Ventiler en région…", fn: () => modalVentiler(n) });
+      items.push("-");
+      items.push({
+        label: "🗑 Supprimer", danger: true,
+        fn: async () => {
+          if (!confirm(`Supprimer « ${n.libelle} » ? Action définitive.`)) return;
+          await api(`/api/lignes/${n.id}`, "DELETE");
+          await reload();
+        },
+      });
+      return items;
+    }
+
+    app.append(el("p", { class: "hint", text: "Page 2 « Personnel » reproduite de l’onglet « 2.Personnel » du modèle Excel : par fonction (2311., 2321., …), 3 phases Préparation / Tournage / Finitions, chacune avec salaire × jours/semaines. La colonne « En région » correspond au bloc « Région » (G–P) du modèle, « France hors rég. » au bloc « France » (R–AA) : la ventilation se saisit directement dans les lignes, comme les colonnes du tableur." }));
+
+    const wrap = el("div", { class: "table-wrap" });
+    const table = el("table", { class: "devis personnel" });
+    table.append(el("thead", {}, el("tr", {},
+      el("th", { text: "Code" }), el("th", { text: "Fonction / ligne" }), el("th", { text: "Phase" }),
+      el("th", { class: "num", text: "Qté" }), el("th", { text: "Unité" }), el("th", { class: "num", text: "Salaire (€)" }),
+      el("th", { class: "num", text: "Total (€)" }), el("th", { class: "num", text: "En région (€)" }),
+      el("th", { class: "num", text: "France hors rég. (€)" }), el("th", { class: "num", text: "Étranger (€)" }),
+      el("th", { class: "num", text: "À ventiler" }), el("th", { text: "Actions", style: "text-align:right" }))));
+    const tbody = el("tbody");
+    table.append(tbody);
+    wrap.append(table);
+    app.append(wrap);
+
+    function ventTd(n, champ, editable) {
+      if (!editable) {
+        const val = n[champ] || 0;
+        return el("td", { class: "num", text: val ? fmt(val) : "—" });
+      }
+      const inp = el("input", { class: "cell num", style: "width:90px", value: n[champ] ? fmtPlain(n[champ]) : "" });
+      inp.setAttribute("data-vent", champ);
+      inp.addEventListener("change", async () => {
+        const body = { mode: "partiel" };
+        for (const c of ["en_region", "hors_region", "etranger"]) {
+          const other = inp.parentElement.parentElement.querySelector(`input[data-vent="${c}"]`);
+          body[c] = other ? parseNum(other.value) : null;
+        }
+        if (body.en_region === null && body.hors_region === null && body.etranger === null) return;
+        await ventilerRow(n, body);
+      });
+      return el("td", { class: "num" }, inp);
+    }
+    function ventTds(n, editable) {
+      return [ventTd(n, "en_region", editable), ventTd(n, "hors_region", editable), ventTd(n, "etranger", editable)];
+    }
+    function aVentilerTd(n) {
+      return el("td", { class: "num", style: n.a_ventiler ? "color:var(--hyp)" : "", text: n.a_ventiler ? fmt(n.a_ventiler) : "—" });
+    }
+    function actionsTd(n, extra) {
+      return el("td", { class: "actions-cell" },
+        el("button", { class: "menu-btn", text: "⋯", title: "Actions de la ligne", onclick: (e) => { e.stopPropagation(); openMenu(e.currentTarget, menuPersonnel(n, extra)); } }));
+    }
+
+    function headerRow(n, prof) {
+      const tr = el("tr", { class: n.type, "data-id": n.id });
+      tr.append(el("td", { class: "code", text: n.chemin || n.code || "" }));
+      tr.append(el("td", { style: "padding-left:" + prof * 16 + "px", text: n.libelle }));
+      tr.append(el("td", {}), el("td", { class: "num" }), el("td", {}), el("td", { class: "num" }),
+        el("td", { class: "montant calcule num", text: fmt(n.montant) }),
+        ...ventTds(n, false), aVentilerTd(n), actionsTd(n));
+      return tr;
+    }
+
+    function feuilleRow(n, prof) {
+      // ligne fonction sans engagement : saisie directe salaire × qté (comme une ligne du modèle)
+      const tr = el("tr", { class: "detail", "data-id": n.id });
+      tr.append(el("td", { class: "code", text: n.chemin || n.code || "" }));
+      const lib = el("input", { class: "cell", value: n.libelle, style: "min-width:200px" });
+      lib.addEventListener("change", () => saveLigne(n.id, { libelle: lib.value }));
+      tr.append(el("td", { style: "padding-left:" + prof * 16 + "px" }, lib));
+      tr.append(el("td", {}));
+      const qte = el("input", { class: "cell num", style: "width:70px", value: n.quantite ?? "" });
+      qte.addEventListener("change", () => saveLigne(n.id, { quantite: parseNum(qte.value) }));
+      const unite = el("select", { class: "cell", style: "min-width:90px" });
+      for (const u of state.referentiel.unites) unite.append(el("option", { value: u, text: u, selected: u === n.unite }));
+      unite.addEventListener("change", () => saveLigne(n.id, { unite: unite.value }));
+      const pu = el("input", { class: "cell num", style: "width:100px", value: n.cout_unitaire ?? "" });
+      pu.addEventListener("change", () => saveLigne(n.id, { cout_unitaire: parseNum(pu.value) }));
+      tr.append(el("td", { class: "num" }, qte), el("td", {}, unite), el("td", { class: "num" }, pu),
+        el("td", { class: "montant " + (n.statut_montant || "calcule"), text: fmt(n.montant) }),
+        ...ventTds(n, true), aVentilerTd(n));
+      const extra = [{ label: "👤 Ajouter un engagement (3 phases)", fn: () => modalTechnicien(n, null, n.fonction_suggeree || null) }];
+      if (n.fonction_suggeree) {
+        extra.push({ label: `Barème suggéré : ${n.fonction_suggeree.nom} — min. ${fmt(n.fonction_suggeree.minimum)} / ${n.fonction_suggeree.unite} (${n.fonction_suggeree.statut === "verifie" ? "VÉRIFIÉ" : "DÉMONSTRATION"})`, fn: () => modalTechnicien(n, null, n.fonction_suggeree) });
+      }
+      tr.append(actionsTd(n, extra));
+      return tr;
+    }
+
+    function techRow(n, prof) {
+      const tr = el("tr", { class: "technicien", "data-id": n.id });
+      const t = n.technicien || {};
+      tr.append(el("td", { class: "code", text: n.chemin || n.code || "" }));
+      let libTxt = n.libelle;
+      if (t.salaire != null) libTxt += ` — ${fmt(t.salaire)} / ${t.unite}`;
+      tr.append(el("td", { style: "padding-left:" + prof * 16 + "px", text: libTxt }));
+      tr.append(el("td", {}), el("td", { class: "num" }), el("td", {}),
+        el("td", { class: "num", text: t.salaire != null ? fmt(t.salaire) : "" }),
+        el("td", { class: "montant calcule num" + ((n.tech_info && n.tech_info.avertissements || []).length || t.hypothese_manuelle ? " hyp" : ""), text: fmt(n.montant) }),
+        ...ventTds(n, false), aVentilerTd(n));
+      tr.append(actionsTd(n, [
+        { label: "👤 Modifier le tarif ou les durées", fn: () => modalOuvrirTechnicien(t.id) },
+      ]));
+      if (n.tech_info && n.tech_info.avertissements) {
+        for (const w of n.tech_info.avertissements) tr.append(el("td", { colspan: "12", class: "warn-box", style: "grid-column:1/-1", text: "⚠ " + w }));
+      }
+      return tr;
+    }
+
+    function phaseRow(techNode, p, prof) {
+      const tr = el("tr", { class: "phase", "data-id": p.ligne_id });
+      const n = { id: p.ligne_id, libelle: `${techNode.libelle} — ${p.phase}`, montant: p.montant, en_region: p.en_region, hors_region: p.hors_region, etranger: p.etranger, a_ventiler: p.a_ventiler };
+      tr.append(el("td", { class: "code", text: "" }));
+      tr.append(el("td", { style: "padding-left:" + prof * 16 + "px", text: p.phase }));
+      tr.append(el("td", { text: p.phase }));
+      const qte = el("input", { class: "cell num", style: "width:70px", value: p.quantite ?? "" });
+      qte.addEventListener("change", () => saveLigne(p.ligne_id, { quantite: parseNum(qte.value) }));
+      tr.append(el("td", { class: "num" }, qte),
+        el("td", { text: p.unite }),
+        el("td", { class: "num", text: p.salaire != null ? fmt(p.salaire) : "" }),
+        el("td", { class: "montant calcule num", text: fmt(p.montant) }),
+        ...ventTds(n, true), aVentilerTd(n));
+      tr.append(actionsTd(n));
+      return tr;
+    }
+
+    function walk(nodes, prof) {
+      for (const n of nodes) {
+        const kids = n.children || [];
+        if (n.type === "technicien") {
+          tbody.append(techRow(n, prof));
+          for (const p of (n.phases || [])) tbody.append(phaseRow(n, p, prof + 1));
+        } else if (!kids.length) {
+          tbody.append(feuilleRow(n, prof));
+        } else {
+          tbody.append(headerRow(n, prof));
+          walk(kids, prof + 1);
+        }
+      }
+    }
+    walk(v.poste.children || [], 1);
+
+    const tp = v.totaux_poste;
+    tbody.append(el("tr", { class: "poste" },
+      el("td", { class: "code", text: "2." }), el("td", { text: "TOTAL POSTE 2 — PERSONNEL" }), el("td", {}),
+      el("td", { class: "num" }), el("td", {}), el("td", { class: "num" }),
+      el("td", { class: "montant num", text: fmt(tp.montant) }),
+      el("td", { class: "num", text: fmt(tp.en_region) }), el("td", { class: "num", text: fmt(tp.hors_region) }),
+      el("td", { class: "num", text: fmt(tp.etranger || 0) }), el("td", { class: "num", text: fmt(tp.a_ventiler) }),
+      el("td", {})));
+  } catch (e) {
+    app.append(el("div", { class: "banner", text: "Erreur : " + e.message }));
+  }
 }
 
 function modalAjouterLigne() {
@@ -696,10 +884,28 @@ function fonctionsDuFilm() {
   return { fonctions: [], grille: null, conv };
 }
 
-function modalTechnicien(parentId, techExistant = null) {
+function modalTechnicien(parentNode, techExistant = null, fonctionPrefill = null) {
   const { fonctions, grille, conv } = fonctionsDuFilm();
   const film = state.devis.film;
   openModal(techExistant ? "Ouvrir l’engagement" : "Ajouter un technicien", (content, actions, close) => {
+    let reprendre = null;
+    if (parentNode && !techExistant) {
+      const aDejaEnfants = parentNode.children && parentNode.children.length > 0;
+      const forfait = parentNode.montant_forfait != null ? parentNode.montant_forfait
+        : (parentNode.quantite != null && parentNode.cout_unitaire != null ? parentNode.quantite * parentNode.cout_unitaire : null);
+      if (forfait != null && !aDejaEnfants) {
+        const box = el("div", { class: "info-box" });
+        box.append(el("p", { style: "margin:0 0 6px", text: `La ligne « ${parentNode.libelle} » contient déjà une estimation de ${fmt(forfait)}. Que souhaitez-vous en faire ?` }));
+        const r1 = el("input", { type: "radio", name: "rep" + parentNode.id, checked: true });
+        const r2 = el("input", { type: "radio", name: "rep" + parentNode.id });
+        box.append(el("label", { style: "display:block" }, r1, ` Reprendre les ${fmt(forfait)} comme sous-détail (aucun double comptage)`));
+        box.append(el("label", { style: "display:block" }, r2, " Remplacer l’estimation par l’engagement"));
+        content.append(box);
+        r1.addEventListener("change", () => (reprendre = true));
+        r2.addEventListener("change", () => (reprendre = false));
+        reprendre = true;
+      }
+    }
     const recherche = el("input", { style: "width:100%", placeholder: "Rechercher une fonction (ex. Chef opérateur du son)…", list: "liste-fonctions" });
     const datalist = el("datalist", { id: "liste-fonctions" });
     for (const f of fonctions) datalist.append(el("option", { value: f.nom }));
@@ -739,6 +945,9 @@ function modalTechnicien(parentId, techExistant = null) {
       salaire.value = techExistant.salaire;
       uniteSel.value = techExistant.unite;
       hypMan.checked = !!techExistant.hypothese_manuelle;
+    } else if (fonctionPrefill) {
+      recherche.value = fonctionPrefill.nom;
+      content.append(el("div", { class: "info-box", text: `Fonction suggérée depuis la nomenclature : « ${fonctionPrefill.nom} » — minimum ${fmt(fonctionPrefill.minimum)} / ${fonctionPrefill.unite} (${fonctionPrefill.statut === "verifie" ? "VÉRIFIÉ" : "DÉMONSTRATION"}${fonctionPrefill.grille_version ? ", grille « " + fonctionPrefill.grille_version + " »" : ""}).` }));
     }
 
     function refresh() {
@@ -799,7 +1008,11 @@ function modalTechnicien(parentId, techExistant = null) {
         const body = { fonction_id: fonc.id, nom: nom.value, salaire: parseNum(salaire.value), unite: uniteSel.value, phases, hypothese_manuelle: hypMan.checked };
         try {
           if (techExistant) await api(`/api/techniciens/${techExistant.id}`, "PUT", body);
-          else { body.parent_id = parentId; await api(`/api/films/${state.filmId}/techniciens`, "POST", body); }
+          else {
+            body.parent_id = parentNode.id;
+            body.reprendre = reprendre;
+            await api(`/api/films/${state.filmId}/techniciens`, "POST", body);
+          }
         } catch (e) { alert(e.message); return; }
         close(); await loadDevis(); renderDevis();
       },

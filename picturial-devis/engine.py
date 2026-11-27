@@ -332,13 +332,39 @@ def avertissements_technicien(conn, film, tech, fonction):
 # ---------------------------------------------------------------- techniciens
 
 def ajouter_technicien(conn, film_id, parent_id, fonction_id, nom="", salaire=None, unite="jour",
-                       phases=None, hypothese_manuelle=False):
+                       phases=None, hypothese_manuelle=False, reprendre=None):
+    """reprendre : None (demander), True (reprendre l'estimation de la ligne parent comme sous-détail),
+    False (remplacer l'estimation). Évite tout double comptage forfait -> engagement."""
     film = _film(conn, film_id)
     fonc = conn.execute("SELECT * FROM fonctions WHERE id=?", (fonction_id,)).fetchone()
     if not fonc:
         raise Erreur("Fonction introuvable dans les barèmes.", 404)
-    if parent_id is not None and not conn.execute("SELECT id FROM lignes WHERE id=? AND film_id=?", (parent_id, film_id)).fetchone():
-        raise Erreur("Rubrique introuvable.", 404)
+    parent = None
+    if parent_id is not None:
+        parent = conn.execute("SELECT * FROM lignes WHERE id=? AND film_id=?", (parent_id, film_id)).fetchone()
+        if not parent:
+            raise Erreur("Rubrique introuvable.", 404)
+    if parent is not None:
+        nb_enfants = conn.execute("SELECT COUNT(*) AS n FROM lignes WHERE parent_id=?", (parent_id,)).fetchone()["n"]
+        estimation = parent["montant_forfait"]
+        if estimation is None and parent["quantite"] is not None and parent["cout_unitaire"] is not None:
+            estimation = r2(parent["quantite"] * parent["cout_unitaire"])
+        if estimation is not None and nb_enfants == 0:
+            if reprendre is None:
+                raise Erreur(
+                    f"La ligne « {parent['libelle']} » contient déjà une estimation de {fmt_fr(estimation)}. "
+                    "Choisissez explicitement de la reprendre comme sous-détail ou de la remplacer.",
+                    confirmation_requise=True)
+            if reprendre:
+                ajouter_ligne(conn, film_id, parent_id, type_ligne="detail",
+                              libelle=f"Estimation initiale reprise ({fmt_fr(estimation)})",
+                              montant_forfait=r2(estimation), unite="forfait", ht=True)
+                conn.execute("UPDATE lignes SET montant_forfait=NULL, quantite=NULL, cout_unitaire=NULL WHERE id=?",
+                             (parent_id,))
+            else:
+                conn.execute("UPDATE lignes SET montant_forfait=NULL, quantite=NULL, cout_unitaire=NULL, note=? WHERE id=?",
+                             ((parent["note"] + " " if parent["note"] else "") +
+                              f"Estimation initiale de {fmt_fr(estimation)} remplacée par l'engagement.", parent_id))
     unite_ref = fonc["unite"]
     if unite != unite_ref and not hypothese_manuelle:
         raise Erreur(
@@ -493,6 +519,77 @@ def _iter_nodes(roots):
     for n in roots:
         yield n
         yield from _iter_nodes(n["children"])
+
+
+# ---------------------------------------------------------------- vue « 2. Personnel » (page 2 du modèle Excel)
+
+def _norm_nom(s):
+    import unicodedata
+    s = unicodedata.normalize("NFKD", (s or "").lower())
+    return "".join(c for c in s if c.isalnum())
+
+
+def fonction_suggeree(conn, film, libelle):
+    """Fonction du référentiel (convention du film) dont le nom correspond au libellé d'une ligne
+    du poste 2 — pour pré-remplir le minimum CCNPC lors de l'ajout d'un engagement."""
+    if not libelle or not film.get("convention_id"):
+        return None
+    cible = _norm_nom(libelle)
+    if not cible:
+        return None
+    rows = conn.execute(
+        "SELECT f.*, g.version AS grille_version FROM fonctions f JOIN grilles g ON f.grille_id=g.id"
+        " WHERE f.convention_id=?", (film["convention_id"],)).fetchall()
+
+    def to_dict(r):
+        return {"id": r["id"], "nom": r["nom"], "minimum": r["minimum"], "unite": r["unite"],
+                "statut": r["statut"], "grille_version": r["grille_version"], "source": r["source"]}
+
+    exact = [r for r in rows if _norm_nom(r["nom"]) == cible]
+    if exact:
+        return to_dict(exact[0])
+    partiels = [r for r in rows if _norm_nom(r["nom"]) and (_norm_nom(r["nom"]) in cible or cible in _norm_nom(r["nom"]))]
+    if partiels:
+        # meilleure correspondance : nom qui commence par le libellé, puis écart de longueur minimal
+        partiels.sort(key=lambda r: (not _norm_nom(r["nom"]).startswith(cible), abs(len(_norm_nom(r["nom"])) - len(cible))))
+        return to_dict(partiels[0])
+    return None
+
+
+def vue_personnel(conn, film_id):
+    """Page 2 « Personnel » : sous-arbre du poste 2 avec, pour chaque engagement, ses phases
+    (Préparation / Tournage / Finitions) et leur ventilation région / France / étranger,
+    plus la fonction de barème suggérée pour chaque ligne fonction. Mêmes totaux que compute_film."""
+    calc = compute_film(conn, film_id)
+    film = calc["film"]
+    poste = next((r for r in calc["arbre"] if r["type"] == "poste" and r["code"] == "2"), None)
+    if poste is None:
+        raise Erreur("Poste 2 « Personnel » introuvable.", 404)
+
+    def habille(n):
+        out = {k: v for k, v in n.items() if k != "children"}
+        if n["type"] == "technicien":
+            out["phases"] = [
+                {"ligne_id": c["id"], "phase": c["phase"], "quantite": c["quantite"], "unite": c["unite"],
+                 "salaire": c["cout_unitaire"], "montant": c["montant"],
+                 "en_region": c["en_region"], "hors_region": c["hors_region"],
+                 "etranger": c.get("etranger", 0), "a_ventiler": c["a_ventiler"]}
+                for c in n["children"] if c["type"] == "detail"]
+        elif n["type"] != "poste":
+            sug = fonction_suggeree(conn, film, n["libelle"])
+            if sug:
+                out["fonction_suggeree"] = sug
+        out["children"] = [habille(c) for c in n["children"]]
+        return out
+
+    return {
+        "film": film,
+        "poste": habille(poste),
+        "totaux_poste": {"montant": poste["montant"], "en_region": poste["en_region"],
+                         "hors_region": poste["hors_region"], "etranger": poste.get("etranger", 0),
+                         "a_ventiler": poste["a_ventiler"]},
+        "totaux_film": calc["totaux"],
+    }
 
 
 # ---------------------------------------------------------------- ventilation régionale

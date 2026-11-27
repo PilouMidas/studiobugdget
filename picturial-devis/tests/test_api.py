@@ -198,6 +198,53 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("semaine", body["erreur"])
 
+    def test_07_personnel_page2(self):
+        fid = self.film_id
+        status, v, _ = call("GET", f"/api/films/{fid}/personnel")
+        self.assertEqual(status, 200)
+        self.assertEqual(v["poste"]["code"], "2")
+        codes = set()
+        def walk(nodes):
+            for n in nodes:
+                if n.get("code"):
+                    codes.add(n["code"])
+                walk(n.get("children", []))
+        walk(v["poste"]["children"])
+        self.assertIn("2336", codes)
+        self.assertIn("237", codes)
+
+        def trouve(nodes, code):
+            for n in nodes:
+                if n.get("code") == code:
+                    return n
+                x = trouve(n.get("children", []), code)
+                if x:
+                    return x
+            return None
+
+        # engagement sur la fonction 2336 (Scripte) du poste 2
+        devis = call("GET", f"/api/films/{fid}/devis")[1]
+        id_2336 = trouve(devis["arbre"], "2336")["id"]
+        status, r, _ = call("POST", f"/api/films/{fid}/techniciens", {
+            "parent_id": id_2336, "fonction_id": self.fonc_son, "salaire": 250.0, "unite": "jour",
+            "phases": [{"phase": "Préparation", "quantite": 2, "unite": "jour"},
+                       {"phase": "Tournage", "quantite": 5, "unite": "jour"}]})
+        self.assertEqual(status, 201)
+        v = call("GET", f"/api/films/{fid}/personnel")[1]
+        f2336 = trouve(v["poste"]["children"], "2336")
+        tech = next(c for c in f2336["children"] if c["type"] == "technicien")
+        self.assertEqual(len(tech["phases"]), 2)
+        ph = next(p for p in tech["phases"] if p["phase"] == "Tournage")
+        self.assertEqual(ph["montant"], 1250.0)  # 5 j x 250 €
+        # ventilation de la phase en région via l'API, comme dans la vue
+        call("POST", f"/api/lignes/{ph['ligne_id']}/ventilation", {"mode": "tout_en"})
+        v = call("GET", f"/api/films/{fid}/personnel")[1]
+        f2336 = trouve(v["poste"]["children"], "2336")
+        tech = next(c for c in f2336["children"] if c["type"] == "technicien")
+        ph = next(p for p in tech["phases"] if p["phase"] == "Tournage")
+        self.assertEqual(ph["en_region"], 1250.0)
+        self.assertEqual(v["totaux_poste"]["en_region"], 1250.0)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

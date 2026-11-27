@@ -437,5 +437,95 @@ class V2CncTest(unittest.TestCase):
         self.assertTrue(v["egalite_ok"])
 
 
+class Page2PersonnelTest(unittest.TestCase):
+    """Page 2 « Personnel » : nomenclature fidèle à l'onglet Excel 2.Personnel + vue phases × région/France."""
+
+    def setUp(self):
+        self.conn, self.tmp = nouveau_contexte()
+        conv = self.conn.execute("SELECT id FROM conventions WHERE nom LIKE '%démonstration%'").fetchone()
+        grille = self.conn.execute("SELECT id, date_effet FROM grilles WHERE convention_id=? ORDER BY rowid LIMIT 1",
+                                   (conv["id"],)).fetchone()
+        self.film_id = db.creer_film(self.conn, "Film page 2", convention_id=conv["id"], grille_id=grille["id"],
+                                      date_ref=grille["date_effet"], taux_charges=0.40, frais_generaux=False)
+
+    def _poste2(self):
+        calc = engine.compute_film(self.conn, self.film_id)
+        return next(r for r in calc["arbre"] if r["code"] == "2")
+
+    @staticmethod
+    def _trouve(nodes, code):
+        for n in nodes:
+            if n.get("code") == code:
+                return n
+            r = Page2PersonnelTest._trouve(n.get("children", []), code)
+            if r:
+                return r
+        return None
+
+    def test_nomenclature_poste2_fidele_au_modele(self):
+        poste = self._poste2()
+        codes = {n["code"] for n in _iter([poste])}
+        for c in ["21", "22", "23", "24", "25", "26", "27", "28", "29",
+                  "211", "221", "231", "2311", "2336", "2391", "241", "2411",
+                  "251", "2511", "261", "2621", "271", "2711", "281", "291"]:
+            self.assertIn(c, codes)
+        nb_details = sum(1 for n in _iter([poste]) if n["type"] == "detail")
+        self.assertGreaterEqual(nb_details, 190)
+        by_code = {n["code"]: n for n in _iter([poste])}
+        self.assertEqual(by_code["235"]["libelle"], "Prise de vues")
+        self.assertEqual(by_code["2336"]["libelle"], "Scripte")
+
+    def test_vue_personnel_phases_ventilation_et_suggestion(self):
+        fonc = self.conn.execute("SELECT * FROM fonctions WHERE nom='Scripte'").fetchone()
+        id_2336 = ligne_par_code(self.conn, self.film_id, "2336")
+        engine.ajouter_technicien(self.conn, self.film_id, id_2336, fonc["id"],
+                                  salaire=180.0, unite="jour",
+                                  phases=[{"phase": "Préparation", "quantite": 2, "unite": "jour"},
+                                          {"phase": "Tournage", "quantite": 5, "unite": "jour"},
+                                          {"phase": "Finitions", "quantite": 1, "unite": "jour"}])
+        v = engine.vue_personnel(self.conn, self.film_id)
+        self.assertEqual(v["poste"]["code"], "2")
+        f2336 = self._trouve(v["poste"]["children"], "2336")
+        self.assertIsNotNone(f2336)
+        self.assertIsNotNone(f2336.get("fonction_suggeree"))
+        self.assertEqual(f2336["fonction_suggeree"]["nom"], "Scripte")
+        tech = next(c for c in f2336["children"] if c["type"] == "technicien")
+        self.assertEqual(len(tech["phases"]), 3)
+        ph_tournage = next(p for p in tech["phases"] if p["phase"] == "Tournage")
+        self.assertEqual(ph_tournage["montant"], 900.0)  # 5 j x 180 €
+        # ventilation de la phase « Tournage » en région (colonne « En région » = bloc G–P du modèle)
+        engine.set_ventilation(self.conn, self.film_id, ph_tournage["ligne_id"], mode="tout_en")
+        v = engine.vue_personnel(self.conn, self.film_id)
+        f2336 = self._trouve(v["poste"]["children"], "2336")
+        tech = next(c for c in f2336["children"] if c["type"] == "technicien")
+        ph = next(p for p in tech["phases"] if p["phase"] == "Tournage")
+        self.assertEqual((ph["en_region"], ph["hors_region"], ph["a_ventiler"]), (900.0, 0.0, 0.0))
+        # totaux du poste 2 identiques au moteur unique
+        poste = self._poste2()
+        self.assertEqual(v["totaux_poste"]["montant"], poste["montant"])
+        self.assertEqual(v["totaux_poste"]["montant"], 1440.0)  # 8 j x 180 €
+        self.assertEqual(v["totaux_poste"]["en_region"], 900.0)
+
+    def test_technicien_sur_fonction_avec_estimation_reprendre_remplacer(self):
+        fonc = self.conn.execute("SELECT * FROM fonctions WHERE nom='Scripte'").fetchone()
+        id_2336 = ligne_par_code(self.conn, self.film_id, "2336")
+        engine.modifier_ligne(self.conn, id_2336, {"montant_forfait": 1000.0})
+        # sans choix explicite -> refus avec demande de confirmation
+        with self.assertRaises(engine.Erreur) as ctx:
+            engine.ajouter_technicien(self.conn, self.film_id, id_2336, fonc["id"], salaire=180.0, unite="jour",
+                                      phases=[{"phase": "Tournage", "quantite": 5, "unite": "jour"}])
+        self.assertTrue(ctx.exception.confirmation_requise)
+        # « remplacer » : l'estimation disparaît, aucun double comptage
+        engine.ajouter_technicien(self.conn, self.film_id, id_2336, fonc["id"], salaire=180.0, unite="jour",
+                                  phases=[{"phase": "Tournage", "quantite": 5, "unite": "jour"}], reprendre=False)
+        self.assertEqual(self._poste2()["montant"], 900.0)
+        # « reprendre » sur une autre fonction : l'estimation est conservée comme sous-détail + l'engagement
+        id_2337 = ligne_par_code(self.conn, self.film_id, "2337")
+        engine.modifier_ligne(self.conn, id_2337, {"montant_forfait": 500.0})
+        engine.ajouter_technicien(self.conn, self.film_id, id_2337, fonc["id"], salaire=180.0, unite="jour",
+                                  phases=[{"phase": "Tournage", "quantite": 2, "unite": "jour"}], reprendre=True)
+        self.assertEqual(self._poste2()["montant"], 900.0 + 500.0 + 360.0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

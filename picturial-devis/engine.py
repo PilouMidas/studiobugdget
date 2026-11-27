@@ -444,12 +444,19 @@ def _ajouter_ligne_charges(conn, film, tech_id, ligne_id, fonction_nom):
     )
 
 
-def modifier_technicien(conn, tech_id, nom=None, salaire=None, phases=None, hypothese_manuelle=None):
+def modifier_technicien(conn, tech_id, nom=None, salaire=None, unite=None, phases=None, hypothese_manuelle=None):
     t = conn.execute("SELECT * FROM techniciens WHERE id=?", (tech_id,)).fetchone()
     if not t:
         raise Erreur("Engagement introuvable.", 404)
     film = _film(conn, t["film_id"])
     fonc = conn.execute("SELECT * FROM fonctions WHERE id=?", (t["fonction_id"],)).fetchone()
+    if unite is not None and unite != t["unite"]:
+        # Changement d'unité (jour <-> semaine…) : autorisé, mais hors barème = hypothèse manuelle signalée
+        if fonc and unite != fonc["unite"] and not (hypothese_manuelle or t["hypothese_manuelle"]):
+            raise Erreur(f"Le barème de « {fonc['nom']} » est en « {fonc['unite']} » : aucune division automatique. "
+                          f"Validez une hypothèse manuelle pour saisir en « {unite} ».")
+        conn.execute("UPDATE techniciens SET unite=? WHERE id=?", (unite, tech_id))
+        conn.execute("UPDATE lignes SET unite=? WHERE parent_id=? AND type='detail'", (unite, t["ligne_id"]))
     if salaire not in (None, ""):
         salaire = r2(salaire)
         conn.execute("UPDATE techniciens SET salaire=?, salaire_perso=? WHERE id=?",

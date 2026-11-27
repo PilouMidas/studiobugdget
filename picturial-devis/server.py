@@ -356,7 +356,8 @@ def tech_get(h, m, q, body):
 def tech_modifier(h, m, q, body):
     with LOCK:
         engine.modifier_technicien(CONN, m.group(1), nom=body.get("nom"), salaire=body.get("salaire"),
-                                   phases=body.get("phases"), hypothese_manuelle=body.get("hypothese_manuelle"))
+                                   unite=body.get("unite"), phases=body.get("phases"),
+                                   hypothese_manuelle=body.get("hypothese_manuelle"))
         fiche = engine.fiche_technicien(CONN, m.group(1))
     return {"ok": True, "fiche": fiche}
 

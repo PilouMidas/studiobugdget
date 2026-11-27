@@ -10,6 +10,9 @@ const state = {
   recapitulatif: false,
   allExpanded: false,
   posteFilter: null,
+  personnelExpanded: new Set(),
+  personnelCollapsed: new Set(),
+  personnelOnlyFilled: false,
 };
 
 const app = document.getElementById("app");
@@ -570,7 +573,13 @@ async function renderPersonnelView(d, poste) {
       return items;
     }
 
-    app.append(el("p", { class: "hint", text: "Page 2 « Personnel » reproduite de l’onglet « 2.Personnel » du modèle Excel : par fonction (2311., 2321., …), 3 phases Préparation / Tournage / Finitions. Sur chaque fonction, renseignez le salaire brut (pré-rempli au minimum du barème CCNPC, négociable — avertissement si inférieur) puis les quantités par phase : l’engagement est créé automatiquement dès la première quantité. La colonne « En région » correspond au bloc « Région » (G–P) du modèle, « France hors rég. » au bloc « France » (R–AA)." }));
+    app.append(el("p", { class: "hint", text: "Page 2 « Personnel » reproduite de l’onglet « 2.Personnel » du modèle Excel : par fonction (2311., 2321., …), 3 phases Préparation / Tournage / Finitions. Cliquez sur une fonction pour déplier ses 3 phases et saisir salaire × quantités (l’engagement est créé automatiquement dès la première quantité) ; cliquez ailleurs pour replier : la ligne affiche alors le total. L’unité se choisit (jour / semaine / …) — hors barème, c’est une hypothèse manuelle signalée. « En région » = bloc « Région » (G–P) du modèle, « France hors rég. » = bloc « France » (R–AA)." }));
+
+    const onlyFilled = el("input", { type: "checkbox", checked: state.personnelOnlyFilled });
+    onlyFilled.addEventListener("change", () => { state.personnelOnlyFilled = onlyFilled.checked; renderDevis(); });
+    app.append(el("div", { class: "toolbar" },
+      el("label", {}, onlyFilled, " Voir uniquement les lignes renseignées"),
+      el("span", { class: "hint", text: " — une ligne par fonction ; ▾/▸ pour déplier/replier les phases et les rubriques." })));
 
     const wrap = el("div", { class: "table-wrap" });
     const table = el("table", { class: "devis personnel" });
@@ -614,9 +623,26 @@ async function renderPersonnelView(d, poste) {
         el("button", { class: "menu-btn", text: "⋯", title: "Actions de la ligne", onclick: (e) => { e.stopPropagation(); openMenu(e.currentTarget, menuPersonnel(n, extra)); } }));
     }
 
+    function isOpen(n, prof) {
+      if (state.personnelExpanded.has(n.id)) return true;
+      if (state.personnelCollapsed.has(n.id)) return false;
+      return prof <= 2; // sections (21.–29.) et rubriques (231.–272.) ouverts ; fonctions repliées
+    }
+    function chev(n, prof, hasKids) {
+      return el("span", {
+        class: "chevron", text: hasKids ? (isOpen(n, prof) ? "▾" : "▸") : " ",
+        onclick: () => {
+          if (!hasKids) return;
+          if (state.personnelExpanded.has(n.id)) { state.personnelExpanded.delete(n.id); state.personnelCollapsed.add(n.id); }
+          else { state.personnelExpanded.add(n.id); state.personnelCollapsed.delete(n.id); }
+          renderDevis();
+        },
+      });
+    }
+
     function headerRow(n, prof) {
       const tr = el("tr", { class: n.type, "data-id": n.id });
-      tr.append(el("td", { class: "code", text: n.chemin || n.code || "" }));
+      tr.append(el("td", { class: "code" }, chev(n, prof, true), " " + (n.chemin || n.code || "")));
       tr.append(el("td", { style: "padding-left:" + prof * 16 + "px", text: n.libelle }));
       tr.append(el("td", {}), el("td", { class: "num" }), el("td", {}), el("td", { class: "num" }),
         el("td", { class: "montant calcule total num", text: fmt(n.montant) }),
@@ -654,7 +680,7 @@ async function renderPersonnelView(d, poste) {
     function techRow(n, prof) {
       const tr = el("tr", { class: "technicien", "data-id": n.id });
       const t = n.technicien || {};
-      tr.append(el("td", { class: "code", text: n.chemin || n.code || "" }));
+      tr.append(el("td", { class: "code" }, chev(n, prof, (n.phases || []).length > 0), " " + (n.chemin || n.code || "")));
       let libTxt = n.libelle;
       if (t.salaire != null) libTxt += ` — ${fmt(t.salaire)} / ${t.unite}`;
       tr.append(el("td", { style: "padding-left:" + prof * 16 + "px", text: libTxt }));
@@ -700,11 +726,19 @@ async function renderPersonnelView(d, poste) {
     function fonctionEditorRow(n, prof) {
       const sug = n.fonction_suggeree;
       const tr = el("tr", { class: n.type, "data-id": n.id });
-      tr.append(el("td", { class: "code", text: n.chemin || n.code || "" }));
+      tr.append(el("td", { class: "code" }, chev(n, prof, true), " " + (n.chemin || n.code || "")));
       const lib = el("input", { class: "cell", value: n.libelle, style: "min-width:200px" });
       lib.addEventListener("change", () => saveLigne(n.id, { libelle: lib.value }));
       tr.append(el("td", { style: "padding-left:" + prof * 16 + "px" }, lib));
-      tr.append(el("td", {}), el("td", { class: "num" }), el("td", { text: sug.unite }));
+      tr.append(el("td", {}), el("td", { class: "num" }));
+      // unité au choix (jour / semaine / …) ; hors barème = hypothèse manuelle signalée
+      const uniteSel = el("select", { class: "cell", style: "min-width:90px", title: `Barème en « ${sug.unite} » — choisir une autre unité = hypothèse manuelle signalée` });
+      for (const u of state.referentiel.unites) uniteSel.append(el("option", { value: u, text: u, selected: u === sug.unite }));
+      uniteSel.setAttribute("data-unite", n.id);
+      uniteSel.addEventListener("change", () => {
+        tbody.querySelectorAll(`tr[data-tpl="${n.id}"] td[data-unite-cell]`).forEach((td) => (td.textContent = uniteSel.value));
+      });
+      tr.append(el("td", {}, uniteSel));
       const sal = el("input", { class: "cell num", style: "width:100px", value: fmtPlain(sug.minimum), title: `Minimum barème : ${fmt(sug.minimum)} / ${sug.unite} — négociable, avertissement si inférieur` });
       sal.setAttribute("data-sal", n.id);
       sal.addEventListener("change", () => tryCreateEngagement(n));
@@ -729,7 +763,7 @@ async function renderPersonnelView(d, poste) {
       q.setAttribute("data-qte", ph);
       q.addEventListener("change", () => tryCreateEngagement(n));
       tr.append(el("td", { class: "num" }, q),
-        el("td", { text: sug.unite }),
+        el("td", { text: sug.unite, "data-unite-cell": "1" }),
         el("td", { class: "num", text: fmt(sug.minimum) }),
         el("td", { class: "montant calcule num", text: "—" }),
         el("td", { class: "num", text: "—" }), el("td", { class: "num", text: "—" }),
@@ -743,36 +777,85 @@ async function renderPersonnelView(d, poste) {
       if (!sug) return;
       const salInp = tbody.querySelector(`input[data-sal="${n.id}"]`);
       const salaire = salInp ? parseNum(salInp.value) : null;
+      const uniteSel = tbody.querySelector(`select[data-unite="${n.id}"]`);
+      const unite = uniteSel ? uniteSel.value : sug.unite;
       const phases = state.referentiel.phases.map((ph) => {
         const q = tbody.querySelector(`tr[data-tpl="${n.id}"] input[data-qte="${ph}"]`);
-        return { phase: ph, quantite: q ? (parseNum(q.value) || 0) : 0, unite: sug.unite };
+        return { phase: ph, quantite: q ? (parseNum(q.value) || 0) : 0, unite };
       }).filter((p) => p.quantite > 0);
       if (!phases.length) return; // attend au moins une quantité
       try {
         await api(`/api/films/${state.filmId}/techniciens`, "POST", {
           parent_id: n.id, fonction_id: sug.id,
-          salaire: salaire != null ? salaire : sug.minimum, unite: sug.unite, phases,
+          salaire: salaire != null ? salaire : sug.minimum,
+          unite, hypothese_manuelle: unite !== sug.unite, // unité choisie hors barème = signalée
+          phases,
         });
       } catch (e) { alert(e.message); }
       await reload();
     }
 
+    // Fonction ayant déjà un engagement : une seule ligne (salaire + unité éditables, total en bleu gras),
+    // phases dépliables via le chevron.
+    function fonctionSummaryRow(n, techs, prof) {
+      const t0 = techs[0].technicien || {};
+      const fonc = (techs[0].tech_info && techs[0].tech_info.fonction) || null;
+      const foncUnite = fonc ? fonc.unite : t0.unite;
+      const tr = el("tr", { class: n.type, "data-id": n.id });
+      tr.append(el("td", { class: "code" }, chev(n, prof, true), " " + (n.chemin || n.code || "")));
+      const lib = el("input", { class: "cell", value: n.libelle, style: "min-width:200px" });
+      lib.addEventListener("change", () => saveLigne(n.id, { libelle: lib.value }));
+      tr.append(el("td", { style: "padding-left:" + prof * 16 + "px" }, lib));
+      tr.append(el("td", {}), el("td", { class: "num" }));
+      const uniteSel = el("select", { class: "cell", style: "min-width:90px", title: `Barème en « ${foncUnite} » — autre unité = hypothèse manuelle signalée` });
+      for (const u of state.referentiel.unites) uniteSel.append(el("option", { value: u, text: u, selected: u === t0.unite }));
+      uniteSel.addEventListener("change", async () => {
+        try {
+          await api(`/api/techniciens/${t0.id}`, "PUT", { unite: uniteSel.value, hypothese_manuelle: uniteSel.value !== foncUnite });
+        } catch (e) { alert(e.message); }
+        await reload();
+      });
+      tr.append(el("td", {}, uniteSel));
+      const sal = el("input", { class: "cell num", style: "width:100px", value: t0.salaire != null ? fmtPlain(t0.salaire) : "" });
+      sal.addEventListener("change", async () => {
+        try { await api(`/api/techniciens/${t0.id}`, "PUT", { salaire: parseNum(sal.value) }); }
+        catch (e) { alert(e.message); }
+        await reload();
+      });
+      const warn = techs[0].tech_info && (techs[0].tech_info.avertissements || []).length ? " hyp" : "";
+      tr.append(el("td", { class: "num" }, sal),
+        el("td", { class: "montant calcule total num" + warn, text: fmt(n.montant) }),
+        ...ventTds(n, false), aVentilerTd(n));
+      tr.append(actionsTd(n, [
+        { label: "👤 Ouvrir l’engagement (tarif, durées)", fn: () => modalOuvrirTechnicien(t0.id) },
+      ]));
+      return tr;
+    }
+
     function walk(nodes, prof) {
       for (const n of nodes) {
         const kids = n.children || [];
-        if (n.type === "technicien") {
+        const techs = kids.filter((c) => c.type === "technicien");
+        const filled = (n.montant || 0) > 0 || techs.length > 0 || kids.some((c) => (c.montant || 0) > 0);
+        if (state.personnelOnlyFilled && !filled) continue;
+        if (techs.length) {
+          tbody.append(fonctionSummaryRow(n, techs, prof));
+          if (isOpen(n, prof)) {
+            for (const t of techs) for (const p of (t.phases || [])) tbody.append(phaseRow(t, p, prof + 1));
+          }
+        } else if (n.type === "technicien") {
           tbody.append(techRow(n, prof));
-          for (const p of (n.phases || [])) tbody.append(phaseRow(n, p, prof + 1));
+          if (isOpen(n, prof)) for (const p of (n.phases || [])) tbody.append(phaseRow(n, p, prof + 1));
         } else if (!kids.length) {
           if (n.fonction_suggeree) {
             tbody.append(fonctionEditorRow(n, prof));
-            for (const ph of state.referentiel.phases) tbody.append(phaseTemplateRow(n, ph, prof + 1));
+            if (isOpen(n, prof)) for (const ph of state.referentiel.phases) tbody.append(phaseTemplateRow(n, ph, prof + 1));
           } else {
             tbody.append(feuilleRow(n, prof));
           }
         } else {
           tbody.append(headerRow(n, prof));
-          walk(kids, prof + 1);
+          if (isOpen(n, prof)) walk(kids, prof + 1);
         }
       }
     }

@@ -596,6 +596,25 @@ class Page1DroitsTest(unittest.TestCase):
         n = next(x for x in _iter(calc["arbre"]) if x["id"] == d1)
         self.assertEqual((n["montant"], n["en_region"]), (600.0, 600.0))
 
+    def test_changement_unite_jour_semaine_avec_hypothese_manuelle(self):
+        fonc = self.conn.execute("SELECT * FROM fonctions WHERE nom='Chef opérateur image'").fetchone()  # unité semaine
+        tid = engine.ajouter_technicien(self.conn, self.film_id, ligne_par_code(self.conn, self.film_id, "235"),
+                                        fonc["id"], salaire=fonc["minimum"], unite="semaine",
+                                        phases=[{"phase": "Tournage", "quantite": 4, "unite": "semaine"}])
+        # passer en jours sans hypothèse manuelle -> refusé (pas de division auto)
+        with self.assertRaises(engine.Erreur):
+            engine.modifier_technicien(self.conn, tid, unite="jour")
+        # avec hypothèse manuelle explicite -> accepté, signalé, phases mises à jour
+        engine.modifier_technicien(self.conn, tid, unite="jour", hypothese_manuelle=True)
+        t = self.conn.execute("SELECT * FROM techniciens WHERE id=?", (tid,)).fetchone()
+        self.assertEqual(t["unite"], "jour")
+        self.assertEqual(t["hypothese_manuelle"], 1)
+        unites = [r["unite"] for r in self.conn.execute(
+            "SELECT unite FROM lignes WHERE parent_id=? AND type='detail'", (t["ligne_id"],)).fetchall()]
+        self.assertEqual(unites, ["jour"])
+        fiche = engine.fiche_technicien(self.conn, tid)
+        self.assertTrue(any("hypothèse manuelle" in w for w in fiche["avertissements"]))
+
     def test_aucun_code_invente_pour_ligne_sans_code(self):
         id_14 = ligne_par_code(self.conn, self.film_id, "14")
         d = engine.ajouter_sous_detail(self.conn, self.film_id, id_14,

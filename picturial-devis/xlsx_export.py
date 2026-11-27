@@ -73,41 +73,64 @@ def export_xlsx_bytes(conn, film_id):
     film = calc["film"]
     t = calc["totaux"]
     buf = io.BytesIO()
-    titre = f"Devis — {film['titre']}"
 
-    recap_rows = [["Code", "Grand poste", "Montant (€)", "En région (€)", "Hors région (€)", "À ventiler (€)"]]
+    def ligne_detail(n, prof):
+        return [n["chemin"], "    " * prof + n["libelle"], n["quantite"], n["unite"],
+                n["cout_unitaire"], n["montant"], n["en_region"], n["hors_region"],
+                n.get("etranger", 0), n["a_ventiler"],
+                "HT" if n["ht"] else ("charges employeur" if n["type"] == "charge" else ""), n["note"]]
+
+    def flatten(roots):
+        out = []
+        def walk(n, prof):
+            out.append((n, prof))
+            for c in n["children"]:
+                walk(c, prof + 1)
+        for r in roots:
+            walk(r, 0)
+        return out
+
+    # Onglet général (comme l'onglet « Devis » du modèle) : lignes de premier niveau + total
+    recap_rows = [["Code", "Poste / ligne", "En région (€)", "France hors région (€)", "Étranger (€)",
+                   "À ventiler (€)", "Total (€)"]]
     for p in calc["recap"]:
-        recap_rows.append([p["code"], p["libelle"], p["montant"], p["en_region"], p["hors_region"], p["a_ventiler"]])
-    recap_rows.append(["", "TOTAL GÉNÉRAL", t["montant"], t["en_region"], t["hors_region"], t["a_ventiler"]])
+        recap_rows.append([p["code"], p["libelle"], p["en_region"], p["hors_region"], p.get("etranger", 0),
+                           p["a_ventiler"], p["montant"]])
+    recap_rows.append(["", "TOTAL HORS TVA (coût définitif total)", t["en_region"], t["hors_region"],
+                       t.get("etranger", 0), t["a_ventiler"], t["montant"]])
     recap_rows.append([])
-    recap_rows.append(["Film", film["titre"], "", "Région cible", calc["film"]["region_cible"], ""])
-    recap_rows.append(["Société", film["societe"], "", "Date réf. barèmes", film["date_ref_baremes"], ""])
-    recap_rows.append(["Taux de charges employeur (hypothèse)", film["taux_charges"], "", "Part régionale", f"{t['en_region'] / t['montant'] * 100:.1f} %" if t["montant"] else "", ""])
+    recap_rows.append(["Film", film["titre"], "", "Région cible", film["region_cible"], "", ""])
+    recap_rows.append(["Société", film["societe"], "", "Date réf. barèmes", film["date_ref_baremes"], "", ""])
+    recap_rows.append(["Hypothèse charges employeur", film["taux_charges"], "", "Part régionale",
+                       f"{t['en_region'] / t['montant'] * 100:.1f} %" if t["montant"] else "", "", ""])
 
-    detail_rows = [["Code", "Libellé", "Qté", "Unité", "Coût unitaire (€)", "Montant (€)", "En région (€)", "Hors région (€)", "À ventiler (€)", "Base", "Note"]]
-    for n, prof in _flatten(calc["arbre"]):
-        base = "HT" if n["ht"] else ("brut + charges" if n["type"] in ("technicien", "charge") else "")
-        if n["type"] == "charge":
-            base = "charges employeur"
-        detail_rows.append([n["chemin"], "    " * prof + n["libelle"], n["quantite"], n["unite"],
-                            n["cout_unitaire"], n["montant"], n["en_region"], n["hors_region"], n["a_ventiler"],
-                            base, n["note"]])
-    detail_rows.append(["", "TOTAL GÉNÉRAL", None, "", None, t["montant"], t["en_region"], t["hors_region"], t["a_ventiler"], "", ""])
+    sheets = [_sheet("Devis (général)", recap_rows, [8, 52, 15, 18, 13, 14, 15])]
 
-    region_rows = [["Code", "Ligne", "Montant (€)", "En région (€)", "Hors région (€)", "À ventiler (€)"]]
+    # Un onglet par grand poste (comme les onglets 1. à 9. du modèle)
+    for r in calc["arbre"]:
+        if r["type"] != "poste":
+            continue
+        nom = f"{r['code']}. {r['libelle']}"[:31]
+        rows = [["Code", "Libellé", "Qté", "Unité", "Coût unit. (€)", "Total (€)", "En région (€)",
+                 "France hors région (€)", "Étranger (€)", "À ventiler (€)", "Base", "Note"]]
+        for n, prof in flatten([r]):
+            rows.append(ligne_detail(n, prof))
+        rows.append(["", "TOTAL DU POSTE", None, "", None, r["montant"], r["en_region"], r["hors_region"],
+                     r.get("etranger", 0), r["a_ventiler"], "", ""])
+        sheets.append(_sheet(nom, rows, [10, 48, 8, 10, 14, 13, 14, 17, 13, 14, 16, 30]))
+
+    # Onglet ventilation territoriale
+    region_rows = [["Code", "Ligne", "Total (€)", "En région (€)", "France hors région (€)", "Étranger (€)", "À ventiler (€)"]]
     for p in calc["recap"]:
-        region_rows.append([p["code"], p["libelle"], p["montant"], p["en_region"], p["hors_region"], p["a_ventiler"]])
-    region_rows.append(["", "TOTAL", t["montant"], t["en_region"], t["hors_region"], t["a_ventiler"]])
+        region_rows.append([p["code"], p["libelle"], p["montant"], p["en_region"], p["hors_region"],
+                            p.get("etranger", 0), p["a_ventiler"]])
+    region_rows.append(["", "TOTAL", t["montant"], t["en_region"], t["hors_region"], t.get("etranger", 0), t["a_ventiler"]])
     region_rows.append([])
     region_rows.append([f"Région cible : {film['region_cible']}",
                         f"Part régionale : {t['en_region'] / t['montant'] * 100:.1f} %" if t["montant"] else "",
-                        "Contrôle : en région + hors région + à ventiler =", t["en_region"] + t["hors_region"] + t["a_ventiler"], "", ""])
-
-    sheets = [
-        _sheet("Récapitulatif", recap_rows, [8, 42, 14, 14, 14, 14]),
-        _sheet("Détail du devis", detail_rows, [10, 46, 8, 10, 16, 14, 14, 14, 14, 16, 30]),
-        _sheet("Ventilation régionale", region_rows, [10, 46, 14, 14, 14, 14]),
-    ]
+                        "Contrôle : région + France + étranger + à ventiler =",
+                        t["en_region"] + t["hors_region"] + t.get("etranger", 0) + t["a_ventiler"], "", "", ""])
+    sheets.append(_sheet("Ventilation territoriale", region_rows, [10, 48, 13, 14, 19, 13, 14]))
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml",

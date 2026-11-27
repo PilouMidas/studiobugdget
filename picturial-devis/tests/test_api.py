@@ -44,12 +44,21 @@ class ApiTest(unittest.TestCase):
     def setUpClass(cls):
         cls.films = call("GET", "/api/films")[1]
         cls.demo = next(f for f in cls.films if "démonstration" in f["titre"])
-        cls.film_id = call("POST", "/api/films", {"titre": "Film API", "societe": "Test"})[1]["id"]
+        cls.film_id = call("POST", "/api/films", {"titre": "Film API", "societe": "Test", "frais_generaux": False, "taux_charges": 0.40, "charges_mode": "avec"})[1]["id"]
         ref = call("GET", "/api/referentiel")[1]
         cls.fonc_id = ref["conventions"][0]["grilles"][0]["fonctions"][0]["id"]
         cls.fonc_son = next(f["id"] for f in ref["conventions"][0]["grilles"][0]["fonctions"]
                             if f["nom"] == "Chef opérateur du son")
         cls.ref = ref
+
+    def test_00b_referentiel_ccnpc(self):
+        ccnpc = next(c for c in self.ref["conventions"] if c["nom"].startswith("CCNPC"))
+        total = sum(len(g["fonctions"]) for g in ccnpc["grilles"])
+        self.assertGreater(total, 150)
+        f = next(f for g in ccnpc["grilles"] if g["version"].startswith("Annexe 1") for f in g["fonctions"] if f["nom"] == "Chef opérateur du son cinéma")
+        self.assertAlmostEqual(f["minimum"], 1930.05755, places=4)
+        self.assertEqual(f["unite"], "semaine")
+        self.assertEqual(f["statut"], "verifie")
 
     def test_00_health_et_statique(self):
         status, body, _ = call("GET", "/api/health")
@@ -65,18 +74,23 @@ class ApiTest(unittest.TestCase):
     def test_01_projet_demo_prempli(self):
         status, devis, _ = call("GET", f"/api/films/{self.demo['id']}/devis")
         self.assertEqual(status, 200)
-        self.assertEqual(devis["totaux"]["montant"], 3450.0)  # 2450 technicien + 1000 caméra
+        # 1750 brut technicien + 997,50 charges (poste 4, règle 57 %) + 1000 caméra
+        # + FG 7 % (262,33) + imprévus 3 % (112,43) = 4 122,26
+        self.assertEqual(devis["totaux"]["montant"], 4122.26)
         self.assertEqual(devis["totaux"]["en_region"], 600.0)
         self.assertEqual(devis["totaux"]["hors_region"], 400.0)
-        self.assertEqual(len(devis["recap"]), 9)  # neuf grands postes
+        self.assertEqual(devis["totaux"].get("etranger", 0), 0.0)
+        self.assertEqual(devis["totaux"]["a_ventiler"], 3122.26)
+        self.assertEqual(len([r for r in devis["recap"] if r["code"].isdigit()]), 9)  # neuf grands postes
 
     def test_02_recette_via_api(self):
         fid = self.film_id
         devis = call("GET", f"/api/films/{fid}/devis")[1]
-        rub_son = next(n for p in devis["arbre"] if p["libelle"] == "Personnel technique"
-                       for n in p["children"] if n["libelle"] == "Son")["id"]
-        rub_cam = next(n for p in devis["arbre"] if p["libelle"] == "Moyens techniques"
-                       for n in p["children"] if n["libelle"] == "Caméra")["id"]
+        rub_son = next(n for p in devis["arbre"] if p["code"] == "2"
+                       for n in p["children"] if n["code"] == "23"
+                       for n2 in n["children"] if n2["code"] == "237")["id"]
+        rub_cam = next(n for p in devis["arbre"] if p["code"] == "7"
+                       for n in p["children"] if n["code"] == "71")["id"]
         # 1. technicien 250 €/jour, 2 j prépa + 5 j tournage
         status, r, _ = call("POST", f"/api/films/{fid}/techniciens", {
             "parent_id": rub_son, "fonction_id": self.fonc_son, "salaire": 250.0, "unite": "jour",
@@ -110,8 +124,8 @@ class ApiTest(unittest.TestCase):
         call("POST", f"/api/lignes/{d1}/ventilation", {"mode": "tout_en"})
         call("POST", f"/api/lignes/{d2}/ventilation", {"mode": "tout_hors"})
         v = call("GET", f"/api/films/{fid}/region")[1]
-        self.assertEqual((v["totaux"]["en_region"], v["totaux"]["hors_region"], v["totaux"]["a_ventiler"],
-                          v["totaux"]["montant"]), (600.0, 400.0, 2800.0, 3800.0))
+        self.assertEqual((v["totaux"]["en_region"], v["totaux"]["hors_region"], v["totaux"].get("etranger", 0), v["totaux"]["a_ventiler"],
+                          v["totaux"]["montant"]), (600.0, 400.0, 0.0, 2800.0, 3800.0))
         self.assertTrue(v["egalite_ok"])
         # bascule des 400 € en région depuis la vue Région
         call("POST", f"/api/lignes/{d2}/ventilation", {"mode": "tout_en"})
@@ -173,9 +187,10 @@ class ApiTest(unittest.TestCase):
     def test_06_unite_incompatible_refusee(self):
         fid = self.film_id
         devis = call("GET", f"/api/films/{fid}/devis")[1]
-        rub_son = next(n for p in devis["arbre"] if p["libelle"] == "Personnel technique"
-                       for n in p["children"] if n["libelle"] == "Son")["id"]
-        fonc_sem = next(f["id"] for f in self.ref["conventions"][0]["grilles"][0]["fonctions"]
+        rub_son = next(n for p in devis["arbre"] if p["code"] == "2"
+                       for n in p["children"] if n["code"] == "23"
+                       for n2 in n["children"] if n2["code"] == "237")["id"]
+        fonc_sem = next(f["id"] for g in self.ref["conventions"][0]["grilles"] for f in g["fonctions"]
                         if f["unite"] == "semaine")
         status, body, _ = call("POST", f"/api/films/{fid}/techniciens", {
             "parent_id": rub_son, "fonction_id": fonc_sem, "salaire": 1300.0, "unite": "jour",

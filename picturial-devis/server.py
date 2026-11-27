@@ -75,13 +75,15 @@ def print_html(conn, film_id):
                 f"<td class='num {cls}'>{engine.fmt_fr(n['montant'])}</td>"
                 f"<td class='num'>{engine.fmt_fr(n['en_region'])}</td>"
                 f"<td class='num'>{engine.fmt_fr(n['hors_region'])}</td>"
+                f"<td class='num'>{engine.fmt_fr(n.get('etranger', 0))}</td>"
                 f"<td class='num'>{engine.fmt_fr(n['a_ventiler'])}</td>"
                 "</tr>" + "".join(ligne_html(c, prof + 1) for c in n["children"]))
 
     recap_rows = "".join(
         f"<tr><td class='code'>{p['code']}</td><td>{engine.escape_html(p['libelle'])}</td>"
         f"<td class='num'>{engine.fmt_fr(p['montant'])}</td><td class='num'>{engine.fmt_fr(p['en_region'])}</td>"
-        f"<td class='num'>{engine.fmt_fr(p['hors_region'])}</td><td class='num'>{engine.fmt_fr(p['a_ventiler'])}</td></tr>"
+        f"<td class='num'>{engine.fmt_fr(p['hors_region'])}</td><td class='num'>{engine.fmt_fr(p.get('etranger', 0))}</td>"
+        f"<td class='num'>{engine.fmt_fr(p['a_ventiler'])}</td></tr>"
         for p in calc["recap"])
     detail_rows = "".join(ligne_html(r, 0) for r in calc["arbre"])
     part = f"{t['en_region'] / t['montant'] * 100:.1f} %" if t["montant"] else "—"
@@ -105,17 +107,19 @@ Date de référence des barèmes : {f['date_ref_baremes']} — Hypothèse de cha
 Édité le {date.today().isoformat()} — montants fictifs de démonstration si le barème est marqué « Démonstration ».</div>
 <button class="noprint" onclick="window.print()">Imprimer / enregistrer en PDF</button>
 <h2>Récapitulatif</h2>
-<table><tr><th>Code</th><th>Grand poste</th><th>Montant</th><th>En région</th><th>Hors région</th><th>À ventiler</th></tr>
+<table><tr><th>Code</th><th>Grand poste</th><th>Montant</th><th>En région</th><th>France (hors région)</th><th>Étranger</th><th>À ventiler</th></tr>
 {recap_rows}
 <tr class="total"><td></td><td>TOTAL GÉNÉRAL</td><td class="num">{engine.fmt_fr(t['montant'])}</td>
 <td class="num">{engine.fmt_fr(t['en_region'])}</td><td class="num">{engine.fmt_fr(t['hors_region'])}</td>
+<td class="num">{engine.fmt_fr(t.get('etranger', 0))}</td>
 <td class="num">{engine.fmt_fr(t['a_ventiler'])}</td></tr></table>
-<div class="meta">Part régionale du budget : <strong>{part}</strong> — contrôle : en région + hors région + à ventiler = {engine.fmt_fr(engine.r2(t['en_region']+t['hors_region']+t['a_ventiler']))}</div>
+<div class="meta">Part régionale du budget : <strong>{part}</strong> — contrôle : en région + France hors région + étranger + à ventiler = {engine.fmt_fr(engine.r2(t['en_region']+t['hors_region']+t.get('etranger',0)+t['a_ventiler']))}</div>
 <h2>Détail du devis</h2>
-<table><tr><th>Code</th><th>Libellé</th><th>Qté</th><th>Unité</th><th>Coût unit.</th><th>Montant</th><th>En région</th><th>Hors région</th><th>À ventiler</th></tr>
+<table><tr><th>Code</th><th>Libellé</th><th>Qté</th><th>Unité</th><th>Coût unit.</th><th>Montant</th><th>En région</th><th>France (hors région)</th><th>Étranger</th><th>À ventiler</th></tr>
 {detail_rows}
 <tr class="total"><td></td><td>TOTAL GÉNÉRAL</td><td></td><td></td><td></td><td class="num">{engine.fmt_fr(t['montant'])}</td>
-<td class="num">{engine.fmt_fr(t['en_region'])}</td><td class="num">{engine.fmt_fr(t['hors_region'])}</td><td class="num">{engine.fmt_fr(t['a_ventiler'])}</td></tr>
+<td class="num">{engine.fmt_fr(t['en_region'])}</td><td class="num">{engine.fmt_fr(t['hors_region'])}</td>
+<td class="num">{engine.fmt_fr(t.get('etranger', 0))}</td><td class="num">{engine.fmt_fr(t['a_ventiler'])}</td></tr>
 </table></body></html>"""
 
 
@@ -147,7 +151,11 @@ def films_creer(h, m, q, body):
     titre = (body.get("titre") or "").strip() or "Nouveau film"
     with LOCK:
         fid = db.creer_film(CONN, titre, societe=body.get("societe", ""), type_oeuvre=body.get("type_oeuvre", "Long métrage"),
-                            region=body.get("region", "Île-de-France"), taux_charges=float(body.get("taux_charges", 0.40) or 0.40))
+                            region=body.get("region", "Île-de-France"),
+                            taux_charges=float(body.get("taux_charges", 0.57) or 0.57),
+                            convention_id=body.get("convention_id"), grille_id=body.get("grille_id"),
+                            charges_mode=body.get("charges_mode", "poste_dedie"),
+                            frais_generaux=bool(body.get("frais_generaux", True)))
     return {"id": fid}, 201
 
 
@@ -323,7 +331,8 @@ def ligne_ventilation(h, m, q, body):
     film_id = CONN.execute("SELECT film_id FROM lignes WHERE id=?", (m.group(1),)).fetchone()["film_id"]
     with LOCK:
         engine.set_ventilation(CONN, film_id, m.group(1), mode=body.get("mode", "partiel"),
-                               en_region=body.get("en_region"), hors_region=body.get("hors_region"))
+                               en_region=body.get("en_region"), hors_region=body.get("hors_region"),
+                               etranger=body.get("etranger"))
     return engine.vue_region(CONN, film_id)
 
 

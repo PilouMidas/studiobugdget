@@ -38,15 +38,19 @@ def rubrique(conn, film_id, poste_lib, rub_lib):
         " AND l.libelle=? AND p.libelle=?", (film_id, rub_lib, poste_lib)).fetchone()["id"]
 
 
+def ligne_par_code(conn, film_id, code):
+    return conn.execute("SELECT id FROM lignes WHERE film_id=? AND code=?", (film_id, code)).fetchone()["id"]
+
+
 class RecetteTest(unittest.TestCase):
     """Scénario de recette de bout en bout, valeurs de démonstration."""
 
     def setUp(self):
         self.conn, self.tmp = nouveau_contexte()
-        self.film_id = db.creer_film(self.conn, "Film test recette", region="Île-de-France", taux_charges=0.40)
+        self.film_id = db.creer_film(self.conn, "Film test recette", region="Île-de-France", taux_charges=0.40, frais_generaux=False, charges_mode="avec")
         self.fonc = self.conn.execute("SELECT * FROM fonctions WHERE nom='Chef opérateur du son'").fetchone()
-        self.rub_son = rubrique(self.conn, self.film_id, "Personnel technique", "Son")
-        self.rub_cam = rubrique(self.conn, self.film_id, "Moyens techniques", "Caméra")
+        self.rub_son = ligne_par_code(self.conn, self.film_id, "237")
+        self.rub_cam = ligne_par_code(self.conn, self.film_id, "71")
 
     def test_01_technicien_250e_2j_5j(self):
         tech_id = engine.ajouter_technicien(
@@ -170,9 +174,9 @@ class RecetteTest(unittest.TestCase):
 class ReglesMetierTest(unittest.TestCase):
     def setUp(self):
         self.conn, self.tmp = nouveau_contexte()
-        self.film_id = db.creer_film(self.conn, "Film règles", region="Île-de-France", taux_charges=0.40)
-        self.rub_son = rubrique(self.conn, self.film_id, "Personnel technique", "Son")
-        self.rub_cam = rubrique(self.conn, self.film_id, "Moyens techniques", "Caméra")
+        self.film_id = db.creer_film(self.conn, "Film règles", region="Île-de-France", taux_charges=0.40, frais_generaux=False)  # mode poste_dedie par défaut
+        self.rub_son = ligne_par_code(self.conn, self.film_id, "237")
+        self.rub_cam = ligne_par_code(self.conn, self.film_id, "71")
 
     def test_forfait_detail_reprendre_pas_de_double_comptage(self):
         # estimation forfaitaire de 2000 €, puis sous-détail en reprenant l'estimation
@@ -223,23 +227,23 @@ class ReglesMetierTest(unittest.TestCase):
         self.assertTrue(any("inférieur au minimum" in w for w in fiche["avertissements"]))
 
     def test_charges_poste_dedie_chaque_euro_une_fois(self):
-        self.conn.execute("UPDATE films SET charges_mode='poste_dedie' WHERE id=?", (self.film_id,))
-        self.conn.commit()
+        # mode par défaut v2 : poste_dedie -> aucune ligne de charges par technicien,
+        # le poste 4 (ligne 44) calcule 57 % de l'équipe technique ; chaque euro compté une fois.
         fonc = self.conn.execute("SELECT * FROM fonctions WHERE nom='Chef opérateur du son'").fetchone()
         tid = engine.ajouter_technicien(self.conn, self.film_id, self.rub_son, fonc["id"],
                                         salaire=250.0, unite="jour",
                                         phases=[{"phase": "Tournage", "quantite": 4, "unite": "jour"}])
+        self.assertIsNone(self.conn.execute(
+            "SELECT id FROM lignes WHERE type='charge' AND technicien_id=?", (tid,)).fetchone())
         calc = engine.compute_film(self.conn, self.film_id)
-        self.assertEqual(calc["totaux"]["montant"], 1400.0)  # 1000 brut + 400 charges, comptés une fois
+        by_code = {n["code"]: n for n in _iter(calc["arbre"])}
+        self.assertEqual(by_code["237"]["montant"], 1000.0)   # brut
+        self.assertEqual(by_code["44"]["montant"], 570.0)      # 57 % de l'équipe technique
+        self.assertEqual(calc["totaux"]["montant"], 1570.0)    # 1000 + 570, une seule fois
         fiche = engine.fiche_technicien(self.conn, tid)
         self.assertEqual(fiche["brut"], 1000.0)
-        self.assertEqual(fiche["charges"], 400.0)
+        self.assertEqual(fiche["charges"], 400.0)              # estimation au taux du film (40 %)
         self.assertEqual(fiche["cout_employeur"], 1400.0)
-        # la ligne de charges est reliée à l'engagement et placée dans le poste dédié
-        charge = self.conn.execute("SELECT * FROM lignes WHERE type='charge' AND technicien_id=?", (tid,)).fetchone()
-        self.assertIsNotNone(charge)
-        parent = self.conn.execute("SELECT * FROM lignes WHERE id=?", (charge["parent_id"],)).fetchone()
-        self.assertEqual(parent["libelle"], "Charges sociales")
 
     def test_salaire_negocie_preserve_a_actualisation(self):
         fonc = self.conn.execute("SELECT * FROM fonctions WHERE nom='Chef opérateur du son'").fetchone()
@@ -274,7 +278,7 @@ class ReglesMetierTest(unittest.TestCase):
     def test_deplacer_et_supprimer(self):
         cam = engine.ajouter_ligne(self.conn, self.film_id, self.rub_cam, type_ligne="ligne",
                                    libelle="Caméra", unite="forfait", montant_forfait=100.0)
-        rub_son2 = rubrique(self.conn, self.film_id, "Personnel technique", "Image")
+        rub_son2 = ligne_par_code(self.conn, self.film_id, "235")
         engine.deplacer_ligne(self.conn, cam, rub_son2)
         row = self.conn.execute("SELECT parent_id FROM lignes WHERE id=?", (cam,)).fetchone()
         self.assertEqual(row["parent_id"], rub_son2)
@@ -292,10 +296,10 @@ class ReglesMetierTest(unittest.TestCase):
 class SauvegardeExportTest(unittest.TestCase):
     def setUp(self):
         self.conn, self.tmp = nouveau_contexte()
-        self.film_id = db.creer_film(self.conn, "Film export", region="Île-de-France", taux_charges=0.40)
+        self.film_id = db.creer_film(self.conn, "Film export", region="Île-de-France", taux_charges=0.40, frais_generaux=False, charges_mode="avec")
         fonc = self.conn.execute("SELECT * FROM fonctions WHERE nom='Chef opérateur du son'").fetchone()
-        rub_son = rubrique(self.conn, self.film_id, "Personnel technique", "Son")
-        rub_cam = rubrique(self.conn, self.film_id, "Moyens techniques", "Caméra")
+        rub_son = ligne_par_code(self.conn, self.film_id, "237")
+        rub_cam = ligne_par_code(self.conn, self.film_id, "71")
         engine.ajouter_technicien(self.conn, self.film_id, rub_son, fonc["id"], salaire=250.0, unite="jour",
                                   phases=[{"phase": "Préparation", "quantite": 2, "unite": "jour"},
                                           {"phase": "Tournage", "quantite": 6, "unite": "jour"}])
@@ -339,7 +343,7 @@ class SauvegardeExportTest(unittest.TestCase):
         z = zipfile.ZipFile(__import__("io").BytesIO(data))
         noms = z.namelist()
         self.assertIn("xl/workbook.xml", noms)
-        self.assertEqual(len([n for n in noms if n.startswith("xl/worksheets/sheet")]), 3)
+        self.assertGreaterEqual(len([n for n in noms if n.startswith("xl/worksheets/sheet")]), 4)
         ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
         # onglet Récapitulatif : total général en cellule numérique
         root = ET.fromstring(z.read("xl/worksheets/sheet1.xml"))
@@ -356,16 +360,81 @@ class SauvegardeExportTest(unittest.TestCase):
         self.assertIn(400.0, nums.values())        # hors région
         self.assertIn(2800.0, nums.values())       # à ventiler
         # onglet Détail : contient les intitulés
-        detail = z.read("xl/worksheets/sheet2.xml").decode("utf-8")
-        self.assertIn("Location cam", detail)
-        self.assertIn("Corps cam", detail)
-        self.assertIn("Charges employeur", detail)
+        tout = " ".join(z.read(n).decode("utf-8") for n in noms if n.startswith("xl/worksheets/sheet"))
+        self.assertIn("Location cam", tout)
+        self.assertIn("Corps cam", tout)
+        self.assertIn("Charges employeur", tout)
+        wb = z.read("xl/workbook.xml").decode("utf-8")
+        self.assertIn("Devis (g", wb)                 # onglet général
+        self.assertIn("2. Personnel", wb)             # un onglet par poste, comme le modèle
+        self.assertIn("Ventilation territoriale", wb)
 
 
 def _iter(roots):
     for n in roots:
         yield n
         yield from _iter(n["children"])
+
+
+class V2CncTest(unittest.TestCase):
+    def setUp(self):
+        self.conn, self.tmp = nouveau_contexte()
+
+    def test_minimas_ccnpc_importes(self):
+        conv = self.conn.execute("SELECT * FROM conventions WHERE nom LIKE 'CCNPC%'").fetchone()
+        self.assertIsNotNone(conv)
+        grille = self.conn.execute("SELECT * FROM grilles WHERE convention_id=? AND version LIKE 'Annexe 1%'", (conv["id"],)).fetchone()
+        self.assertIsNotNone(grille)
+        self.assertEqual(grille["statut"], "verifie")
+        self.assertIn("PCINE", grille["source"])
+        self.assertEqual(grille["date_effet"], "2026-06-01")
+        f = self.conn.execute("SELECT * FROM fonctions WHERE grille_id=? AND nom='Chef opérateur du son cinéma'", (grille["id"],)).fetchone()
+        self.assertIsNotNone(f)
+        self.assertAlmostEqual(f["minimum"], 1930.05755, places=4)
+        self.assertEqual(f["unite"], "semaine")
+        self.assertEqual(f["statut"], "verifie")
+        nb = self.conn.execute("SELECT COUNT(*) AS n FROM fonctions WHERE convention_id=?", (conv["id"],)).fetchone()["n"]
+        self.assertGreater(nb, 150)
+
+    def test_nomenclature_cnc_et_charges_poste4(self):
+        film_id = db.creer_film(self.conn, "Film CNC", taux_charges=0.57)
+        calc = engine.compute_film(self.conn, film_id)
+        codes = [r["code"] for r in calc["recap"]]
+        self.assertEqual([c for c in codes if c.isdigit()], ["1","2","3","4","5","6","7","8","9"])
+        self.assertIn("FG", codes); self.assertIn("IMP", codes)
+        fonc = self.conn.execute("SELECT * FROM fonctions WHERE nom='Chef opérateur du son'").fetchone()
+        engine.ajouter_technicien(self.conn, film_id, ligne_par_code(self.conn, film_id, "237"), fonc["id"],
+                                  salaire=1000.0, unite="jour",
+                                  phases=[{"phase": "Tournage", "quantite": 4, "unite": "jour"}])
+        calc = engine.compute_film(self.conn, film_id)
+        by_code = {}
+        for n in _iter(calc["arbre"]):
+            by_code[n["code"]] = n
+        self.assertEqual(by_code["237"]["montant"], 4000.0)      # 4 j x 1000 €
+        self.assertEqual(by_code["44"]["montant"], 2280.0)       # 57 % de l'équipe technique (poste 2 hors 21/22)
+        postes_1_9 = sum(by_code[str(i)]["montant"] for i in range(1, 10))
+        self.assertEqual(postes_1_9, 6280.0)
+        self.assertEqual(by_code["FG"]["montant"], engine.r2(0.07 * 6280.0))   # 439,60
+        self.assertEqual(by_code["IMP"]["montant"], engine.r2(0.03 * 6280.0))  # 188,40
+        self.assertEqual(calc["totaux"]["montant"], engine.r2(6280.0 + 439.60 + 188.40))  # 6 908,00
+
+    def test_ventilation_etranger(self):
+        film_id = db.creer_film(self.conn, "Film étranger", frais_generaux=False)
+        cam = engine.ajouter_ligne(self.conn, film_id, ligne_par_code(self.conn, film_id, "71"),
+                                   type_ligne="ligne", libelle="Location caméra", unite="forfait", montant_forfait=1000.0)
+        engine.set_ventilation(self.conn, film_id, cam, mode="tout_en", en_region=600.0)
+        # mode partiel multi-feuilles impossible ici (1 feuille) : on pose 600 en région, 400 étranger
+        engine.set_ventilation(self.conn, film_id, cam, mode="partiel", en_region=600.0, etranger=400.0)
+        v = engine.vue_region(self.conn, film_id)
+        self.assertEqual(v["totaux"]["en_region"], 600.0)
+        self.assertEqual(v["totaux"]["hors_region"], 0.0)
+        self.assertEqual(v["totaux"]["etranger"], 400.0)
+        self.assertEqual(v["totaux"]["a_ventiler"], 0.0)
+        self.assertTrue(v["egalite_ok"])
+        engine.set_ventilation(self.conn, film_id, cam, mode="tout_etranger")
+        v = engine.vue_region(self.conn, film_id)
+        self.assertEqual((v["totaux"]["etranger"], v["totaux"]["montant"]), (1000.0, 1000.0))
+        self.assertTrue(v["egalite_ok"])
 
 
 if __name__ == "__main__":

@@ -58,6 +58,31 @@ conservés si vous remplacez le dossier par une nouvelle version :
 
 Fermez le navigateur, éteignez le Mac, relancez le lendemain : le devis est identique.
 
+## v2 — calquée sur vos documents
+
+- **Nomenclature CNC** reprise de votre modèle « DEVIS A LA RECHERCHE DE LA BOUM 22_10_26.xlsx » :
+  9 postes (1. Droits artistiques … 9. Assurances et divers), codes et intitulés du modèle
+  (11.–19., 21.–29., 231.–239., 31.–39., 41.–47., 51.–59., 61.–69., 71.–76., 81.–89., 91.–94.),
+  **charges sociales en poste 4** (lignes 41.–45. calculées en % : auteurs 20 %, producteurs 64 %,
+  réal. technicien 57 %, équipe technique 57 %, artistes 52 % + 10 % BNC), **frais généraux 7 %**
+  et **imprévus 3 %** calculés sur le total des postes 1–9 (lignes FG / IMP), total = « Total hors TVA ».
+- **Ventilation à 3 cases** comme votre modèle : en région / France (hors région) / à l'étranger,
+  avec reliquat « à ventiler » et contrôle d'égalité permanent.
+- **Barèmes CCNPC importés du document officiel** « Salaires minimas conventionnels applicables au
+  1er juin 2026 » (429 fonctions, statut « VÉRIFIÉ », source = onglet du document) : Annexe 1 (base 39h,
+  hebdo), Annexe 2 (équivalence tournage), Annexes 3/3 bis (dérogation, accords 2019/2025), Annexe 4
+  (permanents, mensuel), artistes-interprètes (jour/semaine), artistes de complément, réalisateurs.
+  Les nouveaux films partent sur la convention **CCNPC (IDCC 3097)**, grille **Annexe 1**, date de
+  référence 2026-06-01. Le barème hebdo n'est jamais divisé en jours : unité « semaine » exigée, ou
+  « hypothèse manuelle » cochée et signalée.
+- **Export Excel fidèle au modèle** : onglet « Devis (général) » (postes + FG + IMP + total hors TVA,
+  colonnes région / France / étranger / à ventiler), **un onglet par poste** (1. … 9.), onglet
+  « Ventilation territoriale ». Montants en cellules numériques.
+- Onglet Devis : **filtre par poste** (sélecteur « Poste : ») pour lire un poste comme un onglet du modèle.
+- Les originaux de vos documents sont conservés en lecture seule dans `picturial-devis/modeles/`.
+- « Scénario Live » et « Formulaire Dérogation » : non repris en v2 (hors périmètre demandé) ;
+  la duplication de projet joue le rôle de « scénario alternatif ».
+
 ## Premiers pas
 
 - Ouvrez le projet de démonstration **« À la recherche de la Boum — démonstration »**
@@ -95,7 +120,7 @@ Fermez le navigateur, éteignez le Mac, relancez le lendemain : le devis est ide
 
 ## Tests exécutés (dans l'environnement de développement, Linux + Python 3.12)
 
-- `python3 -m unittest discover -s tests` : **25 tests OK**, couvrant la recette complète
+- `python3 -m unittest discover -s tests` : **29 tests OK** (recette v1 + v2 : import des 429 minimas CCNPC vérifiés, nomenclature CNC, charges poste 4 à 57 %, FG 7 % / imprévus 3 %, ventilation étranger, recette complète 1750/700/2450 € → 3800 €), couvrant la recette complète
   (technicien 250 €/jour × 2 j prépa + 5 j tournage → 1 750 € brut, 700 € charges, 2 450 € ;
   passage à 6 j → 2 000 € / 800 € / 2 800 €, hausse du total exactement 350 € ; location
   caméra 600 + 400 → 1 000 €, film 3 800 € ; ventilation 600/400 avec 2 800 € à ventiler,

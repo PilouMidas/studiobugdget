@@ -9,6 +9,7 @@ const state = {
   collapsed: new Set(),
   recapitulatif: false,
   allExpanded: true,
+  posteFilter: null,
 };
 
 const app = document.getElementById("app");
@@ -342,15 +343,21 @@ function renderDevis() {
   app.append(el("h1", { text: `Devis — ${d.film.titre}` }));
   const nomConv = (state.referentiel.conventions.find((c) => c.id === d.film.convention_id) || {}).nom || "—";
   const grille = (state.referentiel.conventions.flatMap((c) => c.grilles).find((g) => g.id === d.film.grille_id)) || {};
-  app.append(el("div", { class: "banner", text: `Nomenclature provisoire à neuf grands postes (éditable). Convention : ${nomConv} · ${grille.version || ""} (effet ${grille.date_effet || "?"}) · date de référence : ${d.film.date_ref_baremes} · région : ${d.film.region_cible} · charges employeur : ${(d.film.taux_charges * 100).toFixed(0)} %` }));
+  app.append(el("div", { class: "banner", text: `Nomenclature CNC à 9 postes calquée sur votre modèle « Devis À la recherche de la Boum » (codes 1.–9., lignes 11.–94., charges sociales en poste 4, frais généraux 7 % et imprévus 3 % calculés). Convention : ${nomConv} · ${grille.version || ""} (effet ${grille.date_effet || "?"}) · date de référence : ${d.film.date_ref_baremes} · région : ${d.film.region_cible} · charges employeur : ${(d.film.taux_charges * 100).toFixed(0)} %` }));
 
   const t = d.totaux;
   const bar = el("div", { class: "totaux-bar" },
     el("div", {}, el("div", { class: "big", text: fmt(t.montant) }), el("div", { class: "lbl", text: "Total général" })),
     el("div", {}, el("div", { class: "big", text: fmt(t.en_region) }), el("div", { class: "lbl", text: "En région" })),
-    el("div", {}, el("div", { class: "big", text: fmt(t.hors_region) }), el("div", { class: "lbl", text: "Hors région" })),
+    el("div", {}, el("div", { class: "big", text: fmt(t.hors_region) }), el("div", { class: "lbl", text: "France (hors région)" })),
+    el("div", {}, el("div", { class: "big", text: fmt(t.etranger || 0) }), el("div", { class: "lbl", text: "Étranger" })),
     el("div", {}, el("div", { class: "big", text: fmt(t.a_ventiler) }), el("div", { class: "lbl", text: "À ventiler" })),
     el("div", { class: "spacer" }),
+    (() => { const sel = el("select", { class: "cell", style: "min-width:240px" });
+      sel.append(el("option", { value: "", text: "Vue : tous les postes", selected: !state.posteFilter }));
+      for (const r of d.arbre) if (r.type === "poste") sel.append(el("option", { value: r.id, text: `${r.code}. ${r.libelle}`, selected: state.posteFilter === r.id }));
+      sel.addEventListener("change", () => { state.posteFilter = sel.value || null; renderDevis(); });
+      return el("label", { style: "font-size:12px;color:var(--gris)" }, "Poste : ", sel); })(),
     el("button", { class: "secondary", text: state.recapitulatif ? "Mode détaillé" : "Mode Récapitulatif", onclick: () => { state.recapitulatif = !state.recapitulatif; renderDevis(); } }),
     el("button", { class: "secondary", text: "Tout déplier", onclick: () => { state.allExpanded = true; state.collapsed.clear(); renderDevis(); } }),
     el("button", { class: "secondary", text: "Tout replier", onclick: () => { state.allExpanded = false; renderDevis(); } }),
@@ -394,7 +401,8 @@ function renderDevis() {
     items.push({ label: "➜ Déplacer vers…", fn: () => modalDeplacer(n) });
     items.push("-");
     items.push({ label: "🗺 Tout affecter en région", fn: () => ventiler(n, "tout_en") });
-    items.push({ label: "🗺 Tout affecter hors région", fn: () => ventiler(n, "tout_hors") });
+    items.push({ label: "🗺 Tout affecter en France (hors région)", fn: () => ventiler(n, "tout_hors") });
+    items.push({ label: "🗺 Tout affecter à l'étranger", fn: () => ventiler(n, "tout_etranger") });
     items.push({ label: "🗺 Ventiler en région…", fn: () => modalVentiler(n) });
     items.push("-");
     items.push({
@@ -414,7 +422,7 @@ function renderDevis() {
   table.append(el("thead", {}, el("tr", {},
     el("th", { text: "Code" }), el("th", { text: "Libellé" }),
     el("th", { class: "num", text: "Qté" }), el("th", { text: "Unité" }), el("th", { class: "num", text: "Coût unit. / forfait" }),
-    el("th", { class: "num", text: "Montant" }), el("th", { class: "num", text: "En région" }), el("th", { class: "num", text: "Hors région" }), el("th", { class: "num", text: "À ventiler" }),
+    el("th", { class: "num", text: "Montant" }), el("th", { class: "num", text: "En région" }), el("th", { class: "num", text: "France (hors rég.)" }), el("th", { class: "num", text: "Étranger" }), el("th", { class: "num", text: "À ventiler" }),
     el("th", { text: "Note" }), el("th", { text: "Actions", style: "text-align:right" }))));
   const tbody = el("tbody");
   table.append(tbody);
@@ -460,6 +468,7 @@ function renderDevis() {
       montantTd,
       el("td", { class: "num", text: n.en_region ? fmt(n.en_region) : "—" }),
       el("td", { class: "num", text: n.hors_region ? fmt(n.hors_region) : "—" }),
+      el("td", { class: "num", text: n.etranger ? fmt(n.etranger) : "—" }),
       el("td", { class: "num", style: n.a_ventiler ? "color:var(--hyp)" : "", text: n.a_ventiler ? fmt(n.a_ventiler) : "—" }),
     );
     const note = el("input", { class: "cell", value: n.note, style: "min-width:120px" });
@@ -477,7 +486,7 @@ function renderDevis() {
       if (n.children && n.children.length) renderRows(n.children, prof + 1);
     }
   }
-  renderRows(d.arbre, 0);
+  renderRows(state.posteFilter ? d.arbre.filter((r) => r.id === state.posteFilter) : d.arbre, 0);
 
   function applyVisibility(nodes, visible = true) {
     for (const n of nodes) {
@@ -589,18 +598,20 @@ function modalDeplacer(n) {
 
 function modalVentiler(n) {
   openModal(`Ventiler « ${n.libelle} » (${fmt(n.montant)})`, (content, actions, close) => {
-    const en = el("input", { class: "num", style: "width:130px", value: n.en_region ? fmtPlain(n.en_region) : "" });
-    const hors = el("input", { class: "num", style: "width:130px", value: n.hors_region ? fmtPlain(n.hors_region) : "" });
-    content.append(el("p", { class: "hint", text: "Saisissez le montant en région ; le hors région se calcule (ou saisissez les deux). Le reliquat reste « à ventiler »." }));
-    content.append(el("div", { style: "display:flex;gap:14px" },
+    const en = el("input", { class: "num", style: "width:120px", value: n.en_region ? fmtPlain(n.en_region) : "" });
+    const hors = el("input", { class: "num", style: "width:120px", value: n.hors_region ? fmtPlain(n.hors_region) : "" });
+    const et = el("input", { class: "num", style: "width:120px", value: n.etranger ? fmtPlain(n.etranger) : "" });
+    content.append(el("p", { class: "hint", text: "Saisissez la répartition ; le reliquat reste « à ventiler ». Contrôle : en région + France hors région + étranger + à ventiler = montant de la ligne." }));
+    content.append(el("div", { style: "display:flex;gap:14px;flex-wrap:wrap" },
       el("div", { class: "field" }, el("label", { text: "En région (€)" }), en),
-      el("div", { class: "field" }, el("label", { text: "Hors région (€)" }), hors)));
+      el("div", { class: "field" }, el("label", { text: "France hors région (€)" }), hors),
+      el("div", { class: "field" }, el("label", { text: "Étranger (€)" }), et)));
     actions.append(el("button", { class: "secondary", text: "Annuler", onclick: close }));
     actions.append(el("button", {
       class: "primary", text: "Enregistrer la ventilation",
       onclick: async () => {
         try {
-          await api(`/api/lignes/${n.id}/ventilation`, "POST", { mode: "partiel", en_region: parseNum(en.value), hors_region: parseNum(hors.value) });
+          await api(`/api/lignes/${n.id}/ventilation`, "POST", { mode: "partiel", en_region: parseNum(en.value), hors_region: parseNum(hors.value), etranger: parseNum(et.value) });
         } catch (e) { alert(e.message); return; }
         close(); await loadDevis(); renderDevis();
       },
@@ -788,24 +799,25 @@ async function renderRegion() {
   app.append(el("div", { class: "cards" },
     card(fmt(t.montant), "Devis général", false),
     card(fmt(t.en_region), `En région — ${v.region}`, true),
-    card(fmt(t.hors_region), "Hors région", false),
+    card(fmt(t.hors_region), "France (hors région)", false),
+    card(fmt(t.etranger || 0), "À l'étranger", false),
     card(fmt(t.a_ventiler), "À ventiler (reliquat)", false),
     card(t.montant ? (t.en_region / t.montant * 100).toFixed(1) + " %" : "—", "Part régionale du budget", true)));
-  app.append(el("p", { class: v.egalite_ok ? "ok" : "ko", text: v.egalite_ok ? `✓ Contrôle : en région + hors région + à ventiler = ${fmt(t.en_region + t.hors_region + t.a_ventiler)} = devis général (${fmt(t.montant)})` : "✗ Incohérence de ventilation détectée." }));
+  app.append(el("p", { class: v.egalite_ok ? "ok" : "ko", text: v.egalite_ok ? `✓ Contrôle : en région + France hors région + étranger + à ventiler = ${fmt(t.en_region + t.hors_region + (t.etranger||0) + t.a_ventiler)} = devis général (${fmt(t.montant)})` : "✗ Incohérence de ventilation détectée." }));
 
   app.append(el("h2", { text: "Sous-totaux par grand poste" }));
   const tp = el("table", { class: "devis" });
-  tp.append(el("thead", {}, el("tr", {}, el("th", { text: "Code" }), el("th", { text: "Poste" }), el("th", { class: "num", text: "Montant" }), el("th", { class: "num", text: "En région" }), el("th", { class: "num", text: "Hors région" }), el("th", { class: "num", text: "À ventiler" }))));
+  tp.append(el("thead", {}, el("tr", {}, el("th", { text: "Code" }), el("th", { text: "Poste" }), el("th", { class: "num", text: "Montant" }), el("th", { class: "num", text: "En région" }), el("th", { class: "num", text: "France (hors rég.)" }), el("th", { class: "num", text: "Étranger" }), el("th", { class: "num", text: "À ventiler" }))));
   const tb = el("tbody");
-  for (const p of v.par_poste) tb.append(el("tr", { class: "poste" }, el("td", { class: "code", text: p.code }), el("td", { text: p.libelle }), el("td", { class: "num", text: fmt(p.montant) }), el("td", { class: "num", text: fmt(p.en_region) }), el("td", { class: "num", text: fmt(p.hors_region) }), el("td", { class: "num", text: fmt(p.a_ventiler) })));
-  tb.append(el("tr", { class: "poste" }, el("td", {}), el("td", { text: "TOTAL" }), el("td", { class: "num", text: fmt(t.montant) }), el("td", { class: "num", text: fmt(t.en_region) }), el("td", { class: "num", text: fmt(t.hors_region) }), el("td", { class: "num", text: fmt(t.a_ventiler) })));
+  for (const p of v.par_poste) tb.append(el("tr", { class: "poste" }, el("td", { class: "code", text: p.code }), el("td", { text: p.libelle }), el("td", { class: "num", text: fmt(p.montant) }), el("td", { class: "num", text: fmt(p.en_region) }), el("td", { class: "num", text: fmt(p.hors_region) }), el("td", { class: "num", text: fmt(p.etranger || 0) }), el("td", { class: "num", text: fmt(p.a_ventiler) })));
+  tb.append(el("tr", { class: "poste" }, el("td", {}), el("td", { text: "TOTAL" }), el("td", { class: "num", text: fmt(t.montant) }), el("td", { class: "num", text: fmt(t.en_region) }), el("td", { class: "num", text: fmt(t.hors_region) }), el("td", { class: "num", text: fmt(t.etranger || 0) }), el("td", { class: "num", text: fmt(t.a_ventiler) })));
   tp.append(tb);
   app.append(el("div", { class: "table-wrap", style: "max-height:38vh" }, tp));
 
   app.append(el("h2", { text: "Affectation ligne par ligne" }));
   app.append(el("p", { class: "hint", text: "« → en région » / « → hors région » bascule toute la dépense d’un côté à l’autre en un geste et modifie la ligne d’origine." }));
   const tl = el("table", { class: "devis" });
-  tl.append(el("thead", {}, el("tr", {}, el("th", { text: "Code" }), el("th", { text: "Ligne" }), el("th", { class: "num", text: "Montant" }), el("th", { class: "num", text: "En région (€)" }), el("th", { class: "num", text: "Hors région (€)" }), el("th", { class: "num", text: "À ventiler" }), el("th", { text: "Bascule" }))));
+  tl.append(el("thead", {}, el("tr", {}, el("th", { text: "Code" }), el("th", { text: "Ligne" }), el("th", { class: "num", text: "Montant" }), el("th", { class: "num", text: "En région (€)" }), el("th", { class: "num", text: "France hors rég. (€)" }), el("th", { class: "num", text: "Étranger (€)" }), el("th", { class: "num", text: "À ventiler" }), el("th", { text: "Bascule" }))));
   const tbl = el("tbody");
   async function setVent(l, body) {
     try {
@@ -815,19 +827,24 @@ async function renderRegion() {
     } catch (e) { alert(e.message); render(); }
   }
   for (const l of v.lignes) {
-    const en = el("input", { class: "cell num", style: "width:110px", value: l.en_region ? fmtPlain(l.en_region) : "" });
-    const hors = el("input", { class: "cell num", style: "width:110px", value: l.hors_region ? fmtPlain(l.hors_region) : "" });
-    en.addEventListener("change", () => setVent(l, { mode: "partiel", en_region: parseNum(en.value), hors_region: parseNum(hors.value) }));
-    hors.addEventListener("change", () => setVent(l, { mode: "partiel", en_region: parseNum(en.value), hors_region: parseNum(hors.value) }));
+    const en = el("input", { class: "cell num", style: "width:100px", value: l.en_region ? fmtPlain(l.en_region) : "" });
+    const hors = el("input", { class: "cell num", style: "width:100px", value: l.hors_region ? fmtPlain(l.hors_region) : "" });
+    const et = el("input", { class: "cell num", style: "width:100px", value: l.etranger ? fmtPlain(l.etranger) : "" });
+    const maj = () => setVent(l, { mode: "partiel", en_region: parseNum(en.value), hors_region: parseNum(hors.value), etranger: parseNum(et.value) });
+    en.addEventListener("change", maj);
+    hors.addEventListener("change", maj);
+    et.addEventListener("change", maj);
     tbl.append(el("tr", { class: l.type },
       el("td", { class: "code", text: l.chemin }), el("td", { text: l.libelle }),
       el("td", { class: "num", text: fmt(l.montant) }),
-      el("td", { class: "num" }, en), el("td", { class: "num" }, hors),
+      el("td", { class: "num" }, en), el("td", { class: "num" }, hors), el("td", { class: "num" }, et),
       el("td", { class: "num", style: l.a_ventiler ? "color:var(--hyp)" : "", text: l.a_ventiler ? fmt(l.a_ventiler) : "—" }),
       el("td", {},
         el("button", { class: "small", text: "→ en région", onclick: () => setVent(l, { mode: "tout_en" }) }),
         " ",
-        el("button", { class: "small", text: "→ hors région", onclick: () => setVent(l, { mode: "tout_hors" }) }))));
+        el("button", { class: "small", text: "→ France HR", onclick: () => setVent(l, { mode: "tout_hors" }) }),
+        " ",
+        el("button", { class: "small", text: "→ étranger", onclick: () => setVent(l, { mode: "tout_etranger" }) }))));
   }
   tl.append(tbl);
   app.append(el("div", { class: "table-wrap" }, tl));

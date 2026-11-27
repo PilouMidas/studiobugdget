@@ -118,11 +118,11 @@ def dupliquer_ligne(conn, ligne_id):
         nid = __import__("db").new_id()
         conn.execute(
             "INSERT INTO lignes (id, film_id, parent_id, type, code, libelle, quantite, unite, cout_unitaire,"
-            " montant_forfait, note, ordre, en_region, hors_region, ht, phase, technicien_id)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " montant_forfait, note, ordre, en_region, hors_region, etranger, ht, phase, regle, technicien_id)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (nid, s["film_id"], new_parent, s["type"], s["code"], s["libelle"] + " (copie)", s["quantite"],
              s["unite"], s["cout_unitaire"], s["montant_forfait"], s["note"], _ordre_suivant(conn, s["film_id"], new_parent),
-             s["en_region"], s["hors_region"], s["ht"], s["phase"], None),
+             s["en_region"], s["hors_region"], s.get("etranger", 0), s["ht"], s["phase"], s.get("regle", ""), None),
         )
         for c in conn.execute("SELECT id FROM lignes WHERE parent_id=? ORDER BY ordre", (old_id,)).fetchall():
             copie(c["id"], nid)
@@ -211,20 +211,30 @@ def compute_film(conn, film_id):
             n["montant"] = None
             n["statut_montant"] = "calcule"
 
-    # passe 2 : lignes de charges employeur (brut du technicien lié x taux du film)
+    # passe 2 : lignes de charges (règle en % sur des codes de postes/lignes, ou brut technicien x taux)
+    by_code = {}
+    for n in nodes.values():
+        if n.get("code"):
+            by_code.setdefault(n["code"], n)
     for n in nodes.values():
         if n["type"] == "charge" and not n["children"]:
-            t = techs.get(n["technicien_id"])
-            if t is None:
-                n["montant"] = 0.0
-            else:
-                brut = 0.0
-                for c in nodes.values():
-                    if c["parent_id"] == t["ligne_id"] and c["type"] == "detail":
-                        brut += c["montant"] or 0.0
-                n["montant"] = r2(brut * (film["taux_charges"] or 0.0))
+            regle = None
+            try:
+                regle = json.loads(n["regle"]) if n.get("regle") else None
+            except Exception:
+                regle = None
+            if not (regle and isinstance(regle, dict) and regle.get("regle")):
+                t = techs.get(n["technicien_id"])
+                if t is None:
+                    n["montant"] = 0.0
+                else:
+                    brut = 0.0
+                    for c in nodes.values():
+                        if c["parent_id"] == t["ligne_id"] and c["type"] == "detail":
+                            brut += c["montant"] or 0.0
+                    n["montant"] = r2(brut * (film["taux_charges"] or 0.0))
 
-    # passe 3 : parents, des feuilles vers la racine
+    # passe 3 : parents, des feuilles vers la racine (charges à règle comptées à 0 pour l'instant)
     def remonte(n):
         for c in n["children"]:
             remonte(c)
@@ -233,6 +243,28 @@ def compute_film(conn, film_id):
     for r in roots:
         remonte(r)
 
+    # passe 4 : charges à règle, deux passes (FG/imprévus dépendent du poste 4, lui-même règle)
+    # En mode « avec », les règles 41-45 du poste 4 sont ignorées (charges déjà comptées par engagement).
+    for _passe in range(2):
+        for n in nodes.values():
+            if n["type"] == "charge" and not n["children"]:
+                try:
+                    regle = json.loads(n["regle"]) if n.get("regle") else None
+                except Exception:
+                    regle = None
+                if regle and isinstance(regle, dict) and regle.get("regle"):
+                    if film["charges_mode"] == "avec" and n.get("code") in ("41", "42", "43", "44", "45"):
+                        n["montant"] = 0.0
+                        continue
+                    total = Decimal("0")
+                    for ent in regle["regle"]:
+                        src = sum(Decimal(str(by_code[c]["montant"] or 0)) for c in ent.get("source", []) if c in by_code)
+                        exc = sum(Decimal(str(by_code[c]["montant"] or 0)) for c in ent.get("exclure", []) if c in by_code)
+                        total += Decimal(str(ent.get("taux", 0))) * (src - exc)
+                    n["montant"] = r2(total)
+        for r in roots:
+            remonte(r)
+
     # ventilation : feuilles = valeurs saisies, parents = somme des enfants
     def ventile(n):
         for c in n["children"]:
@@ -240,7 +272,8 @@ def compute_film(conn, film_id):
         if n["children"]:
             n["en_region"] = r2(sum(c["en_region"] for c in n["children"]))
             n["hors_region"] = r2(sum(c["hors_region"] for c in n["children"]))
-        n["a_ventiler"] = r2((n["montant"] or 0.0) - n["en_region"] - n["hors_region"])
+            n["etranger"] = r2(sum(c.get("etranger", 0) for c in n["children"]))
+        n["a_ventiler"] = r2((n["montant"] or 0.0) - n["en_region"] - n["hors_region"] - n.get("etranger", 0))
     for r in roots:
         ventile(r)
 
@@ -276,10 +309,12 @@ def compute_film(conn, film_id):
         "montant": r2(sum(r["montant"] or 0.0 for r in roots)),
         "en_region": r2(sum(r["en_region"] for r in roots)),
         "hors_region": r2(sum(r["hors_region"] for r in roots)),
+        "etranger": r2(sum(r.get("etranger", 0) for r in roots)),
         "a_ventiler": r2(sum(r["a_ventiler"] for r in roots)),
     }
     recap = [{"id": r["id"], "code": r["code"], "libelle": r["libelle"], "montant": r["montant"],
-              "en_region": r["en_region"], "hors_region": r["hors_region"], "a_ventiler": r["a_ventiler"]}
+              "en_region": r["en_region"], "hors_region": r["hors_region"], "etranger": r.get("etranger", 0),
+              "a_ventiler": r["a_ventiler"]}
              for r in roots]
     return {"film": dict(film), "arbre": roots, "totaux": totaux, "recap": recap}
 
@@ -344,7 +379,8 @@ def ajouter_technicien(conn, film_id, parent_id, fonction_id, nom="", salaire=No
             (db.new_id(), film_id, ligne_id, "detail", "", p.get("phase", ""), q, p.get("unite", unite), salaire,
              _ordre_suivant(conn, film_id, ligne_id), p.get("phase", "")),
         )
-    _ajouter_ligne_charges(conn, film, tech_id, ligne_id, fonc["nom"])
+    if film["charges_mode"] == "avec":
+        _ajouter_ligne_charges(conn, film, tech_id, ligne_id, fonc["nom"])
     conn.commit()
     return tech_id
 
@@ -439,7 +475,7 @@ def fiche_technicien(conn, tech_id):
     for n in _iter_nodes(calc["arbre"]):
         if n["type"] == "charge" and n["technicien_id"] == tech_id:
             charge = n
-    charges = charge["montant"] if charge else 0.0
+    charges = charge["montant"] if charge else r2(brut * (film["taux_charges"] or 0.0))
     fonc = conn.execute("SELECT * FROM fonctions WHERE id=?", (t["fonction_id"],)).fetchone() if t["fonction_id"] else None
     return {
         "technicien": dict(t),
@@ -472,7 +508,7 @@ def _feuilles(conn, node):
     return out
 
 
-def set_ventilation(conn, film_id, ligne_id, mode="partiel", en_region=None, hors_region=None):
+def set_ventilation(conn, film_id, ligne_id, mode="partiel", en_region=None, hors_region=None, etranger=None):
     """Modes : tout_en, tout_hors, partiel. Sur une ligne parent, s'applique à toutes ses feuilles
     (la ligne d'origine est modifiée, aucune copie n'est créée)."""
     calc = compute_film(conn, film_id)
@@ -491,24 +527,32 @@ def set_ventilation(conn, film_id, ligne_id, mode="partiel", en_region=None, hor
     feuilles = _feuilles(conn, cible)
     if mode == "tout_en":
         for f in feuilles:
-            conn.execute("UPDATE lignes SET en_region=?, hors_region=0 WHERE id=?", (f["montant"], f["id"]))
+            conn.execute("UPDATE lignes SET en_region=?, hors_region=0, etranger=0 WHERE id=?", (f["montant"], f["id"]))
     elif mode == "tout_hors":
         for f in feuilles:
-            conn.execute("UPDATE lignes SET en_region=0, hors_region=? WHERE id=?", (f["montant"], f["id"]))
+            conn.execute("UPDATE lignes SET en_region=0, hors_region=?, etranger=0 WHERE id=?", (f["montant"], f["id"]))
+    elif mode == "tout_etranger":
+        for f in feuilles:
+            conn.execute("UPDATE lignes SET en_region=0, hors_region=0, etranger=? WHERE id=?", (f["montant"], f["id"]))
     else:
         total = r2(sum(f["montant"] or 0.0 for f in feuilles))
         if len(feuilles) == 1:
             f = feuilles[0]
             m = f["montant"] or 0.0
             en = r2(en_region) if en_region is not None else 0.0
-            hors = r2(hors_region) if hors_region is not None else r2(m - en)
-            if r2(en + hors) > r2(m + 0.005):
-                raise Erreur(f"En région + hors région ({fmt_fr(en + hors)}) dépasse le montant de la ligne ({fmt_fr(m)}).")
-            conn.execute("UPDATE lignes SET en_region=?, hors_region=? WHERE id=?", (en, hors, f["id"]))
+            hors = r2(hors_region) if hors_region is not None else 0.0
+            et = r2(etranger) if etranger is not None else 0.0
+            if en_region is None and hors_region is None and etranger is None:
+                hors = r2(m - en - et)
+            if r2(en + hors + et) > r2(m + 0.005):
+                raise Erreur(f"En région + hors région + étranger ({fmt_fr(en + hors + et)}) dépasse le montant de la ligne ({fmt_fr(m)}).")
+            conn.execute("UPDATE lignes SET en_region=?, hors_region=?, etranger=? WHERE id=?", (en, hors, et, f["id"]))
         else:
             en_total = r2(en_region) if en_region is not None else 0.0
             if en_total > total:
                 raise Erreur(f"Montant en région ({fmt_fr(en_total)}) supérieur au montant de la ligne ({fmt_fr(total)}).")
+            if en_region is None and hors_region is None and etranger is None:
+                raise Erreur("Précisez au moins un montant (en région, hors région ou étranger).")
             cumul = Decimal("0")
             for i, f in enumerate(feuilles):
                 m = Decimal(str(f["montant"] or 0.0))
@@ -529,12 +573,12 @@ def vue_region(conn, film_id):
         if n["type"] in ("ligne", "detail", "technicien", "charge") and (n["montant"] or 0) > 0:
             lignes.append({"id": n["id"], "chemin": n["chemin"], "libelle": n["libelle"], "type": n["type"],
                            "montant": n["montant"], "en_region": n["en_region"], "hors_region": n["hors_region"],
-                           "a_ventiler": n["a_ventiler"]})
+                           "etranger": n.get("etranger", 0), "a_ventiler": n["a_ventiler"]})
     totaux = calc["totaux"]
     part = (totaux["en_region"] / totaux["montant"]) if totaux["montant"] else 0.0
     return {"region": calc["film"]["region_cible"], "totaux": totaux, "part_regionale": part,
             "par_poste": calc["recap"], "lignes": lignes,
-            "egalite_ok": r2(totaux["en_region"] + totaux["hors_region"] + totaux["a_ventiler"]) == totaux["montant"]}
+            "egalite_ok": r2(totaux["en_region"] + totaux["hors_region"] + totaux.get("etranger", 0) + totaux["a_ventiler"]) == totaux["montant"]}
 
 
 def changer_region_cible(conn, film_id, nouvelle_region, option=None):
@@ -544,14 +588,14 @@ def changer_region_cible(conn, film_id, nouvelle_region, option=None):
     if nouvelle_region == film["region_cible"]:
         return {"change": False}
     nb_ventilees = conn.execute(
-        "SELECT COUNT(*) AS n FROM lignes WHERE film_id=? AND (en_region>0 OR hors_region>0)", (film_id,)).fetchone()["n"]
+        "SELECT COUNT(*) AS n FROM lignes WHERE film_id=? AND (en_region>0 OR hors_region>0 OR etranger>0)", (film_id,)).fetchone()["n"]
     if nb_ventilees > 0 and option not in ("conserver", "reinitialiser"):
         raise Erreur(
             f"{nb_ventilees} ligne(s) sont déjà ventilées pour « {film['region_cible']} ». "
             "Choisissez : conserver les affectations existantes, ou tout remettre « à ventiler ».",
             status=409, confirmation_requise=True)
     if option == "reinitialiser":
-        conn.execute("UPDATE lignes SET en_region=0, hors_region=0 WHERE film_id=?", (film_id,))
+        conn.execute("UPDATE lignes SET en_region=0, hors_region=0, etranger=0 WHERE film_id=?", (film_id,))
     conn.execute("UPDATE films SET region_cible=? WHERE id=?", (nouvelle_region, film_id))
     conn.commit()
     return {"change": True, "region": nouvelle_region, "option": option, "lignes_reinitialisees": nb_ventilees if option == "reinitialiser" else 0}
@@ -621,10 +665,11 @@ def dupliquer_film(conn, film_id):
         mapping[old_id] = nid
         conn.execute(
             "INSERT INTO lignes (id, film_id, parent_id, type, code, libelle, quantite, unite, cout_unitaire,"
-            " montant_forfait, note, ordre, en_region, hors_region, ht, phase, technicien_id)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
+            " montant_forfait, note, ordre, en_region, hors_region, etranger, ht, phase, regle, technicien_id)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
             (nid, nouveau_id, new_parent, s["type"], s["code"], s["libelle"], s["quantite"], s["unite"],
-             s["cout_unitaire"], s["montant_forfait"], s["note"], s["ordre"], s["en_region"], s["hors_region"], s["ht"], s["phase"]))
+             s["cout_unitaire"], s["montant_forfait"], s["note"], s["ordre"], s["en_region"], s["hors_region"],
+             s.get("etranger", 0), s["ht"], s["phase"], s.get("regle", "")))
         for c in conn.execute("SELECT id FROM lignes WHERE film_id=? AND parent_id=? ORDER BY ordre", (film_id, old_id)):
             copie(c["id"], nid)
     for r in conn.execute("SELECT id FROM lignes WHERE film_id=? AND parent_id IS NULL ORDER BY ordre", (film_id,)):
@@ -686,12 +731,12 @@ def restaurer_projet(conn, data):
         mapping[l["id"]] = nid
         conn.execute(
             "INSERT INTO lignes (id, film_id, parent_id, type, code, libelle, quantite, unite, cout_unitaire,"
-            " montant_forfait, note, ordre, en_region, hors_region, ht, phase, technicien_id)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " montant_forfait, note, ordre, en_region, hors_region, etranger, ht, phase, regle, technicien_id)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (nid, nouveau_id, mapping.get(l.get("parent_id")), l["type"], l.get("code", ""), l["libelle"],
              l.get("quantite"), l.get("unite", "forfait"), l.get("cout_unitaire"), l.get("montant_forfait"),
              l.get("note", ""), l.get("ordre", 0), l.get("en_region", 0), l.get("hors_region", 0),
-             l.get("ht", 1), l.get("phase", ""), None))
+             l.get("etranger", 0), l.get("ht", 1), l.get("phase", ""), l.get("regle", ""), None))
     for l in data.get("lignes", []):
         insere(l)
     tech_map = {}

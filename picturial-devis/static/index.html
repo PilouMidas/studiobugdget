@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Picturial — Devis de production</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">
+    <span class="logo">P</span>
+    <span class="brand-name">Picturial <em>devis de production</em></span>
+  </div>
+  <nav id="tabs">
+    <button data-tab="accueil" class="tab">Accueil</button>
+    <button data-tab="parametres" class="tab">Paramètres du film</button>
+    <button data-tab="devis" class="tab">Devis</button>
+    <button data-tab="region" class="tab">Région</button>
+    <button data-tab="baremes" class="tab">Barèmes</button>
+  </nav>
+  <div class="top-actions">
+    <span id="save-indicator" class="save">—</span>
+    <button id="btn-excel" class="ghost" title="Export Excel .xlsx">Excel</button>
+    <button id="btn-print" class="ghost" title="Vue imprimable (PDF)">Imprimer</button>
+    <button id="btn-backup" class="ghost" title="Sauvegarde complète du projet (JSON)">Sauvegarder</button>
+    <button id="btn-restore" class="ghost" title="Restaurer une sauvegarde">Restaurer</button>
+    <input type="file" id="file-restore" accept=".json,application/json" hidden>
+  </div>
+</header>
+<main id="app"></main>
+<div id="modal-root"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

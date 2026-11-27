@@ -83,6 +83,22 @@ Fermez le navigateur, éteignez le Mac, relancez le lendemain : le devis est ide
 - « Scénario Live » et « Formulaire Dérogation » : non repris en v2 (hors périmètre demandé) ;
   la duplication de projet joue le rôle de « scénario alternatif ».
 
+## Guide rapide — rentrer une ligne de budget
+
+1. Onglet **Devis** → cliquez le bouton jaune **« ＋ Ajouter une ligne »** en haut à droite.
+2. Choisissez **où** elle va (poste / rubrique / ligne, ex. `7. Moyens techniques > 71. Matériels prises de vues « cinéma »`).
+3. Donnez un **intitulé** (ex. « Location caméra »), puis **quantité × coût unitaire** (ex. 5 jours × 120 €)
+   **ou** un **forfait** (ex. 1 000 €). Laissez vide ce qui ne sert pas.
+4. Cliquez **« Ajouter la ligne »** : le montant se calcule seul et remonte dans le total général.
+
+Variantes depuis une ligne existante (bouton « ⋯ » à droite de la ligne) :
+- **« Ajouter un sous-détail »** : décompose une ligne (ex. Location caméra → Corps caméra 600 € + Optiques 400 €) ;
+  si la ligne avait un forfait, on vous demande de le reprendre comme premier sous-détail ou de le remplacer (jamais de double comptage) ;
+- **« Ajouter un technicien »** (sur une rubrique, ex. 237. Son) : fonction + salaire (prérempli au minimum CCNPC) + phases prépa/tournage/finissions ;
+- « Déplacer vers… », « Dupliquer », « Tout affecter en région / France / étranger », « Supprimer ».
+
+L'arbre est **replié par défaut** : cliquez les ▸/▾ pour déplier/replier, ou « Tout déplier » / « Mode Récapitulatif » en haut.
+
 ## Premiers pas
 
 - Ouvrez le projet de démonstration **« À la recherche de la Boum — démonstration »**

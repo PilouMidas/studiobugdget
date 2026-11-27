@@ -8,7 +8,7 @@ const state = {
   referentiel: null,
   collapsed: new Set(),
   recapitulatif: false,
-  allExpanded: true,
+  allExpanded: false,
   posteFilter: null,
 };
 
@@ -353,6 +353,7 @@ function renderDevis() {
     el("div", {}, el("div", { class: "big", text: fmt(t.etranger || 0) }), el("div", { class: "lbl", text: "Étranger" })),
     el("div", {}, el("div", { class: "big", text: fmt(t.a_ventiler) }), el("div", { class: "lbl", text: "À ventiler" })),
     el("div", { class: "spacer" }),
+    el("button", { class: "primary", text: "＋ Ajouter une ligne", onclick: () => modalAjouterLigne() }),
     (() => { const sel = el("select", { class: "cell", style: "min-width:240px" });
       sel.append(el("option", { value: "", text: "Vue : tous les postes", selected: !state.posteFilter }));
       for (const r of d.arbre) if (r.type === "poste") sel.append(el("option", { value: r.id, text: `${r.code}. ${r.libelle}`, selected: state.posteFilter === r.id }));
@@ -505,6 +506,53 @@ function renderDevis() {
     }
   }
   applyVisibility(d.arbre);
+}
+
+function modalAjouterLigne() {
+  const d = state.devis;
+  const cibles = [];
+  (function walk(nodes, prof) {
+    for (const x of nodes) {
+      if (["poste", "rubrique", "ligne"].includes(x.type)) cibles.push({ id: x.id, label: "　".repeat(prof) + (x.chemin || x.code) + " — " + x.libelle });
+      if (x.children) walk(x.children, prof + 1);
+    }
+  })(d.arbre, 0);
+  openModal("Ajouter une ligne budgétaire", (content, actions, close) => {
+    const sel = el("select", { style: "width:100%" });
+    for (const c of cibles) sel.append(el("option", { value: c.id, text: c.label }));
+    const lib = el("input", { style: "width:100%", placeholder: "Intitulé (ex. Location caméra)" });
+    const qte = el("input", { class: "num", style: "width:90px" });
+    const unite = el("select");
+    for (const u of state.referentiel.unites) unite.append(el("option", { value: u, text: u, selected: u === "forfait" }));
+    const pu = el("input", { class: "num", style: "width:120px", placeholder: "Coût unitaire €" });
+    const forf = el("input", { class: "num", style: "width:120px", placeholder: "ou forfait €" });
+    const ht = el("input", { type: "checkbox", checked: true });
+    const note = el("input", { style: "width:100%", placeholder: "Note (facultatif)" });
+    content.append(el("div", { class: "field" }, el("label", { text: "Où ? (poste / rubrique / ligne)" }), sel));
+    content.append(el("div", { class: "field" }, el("label", { text: "Intitulé" }), lib));
+    content.append(el("div", { style: "display:flex;gap:10px;align-items:end;flex-wrap:wrap" },
+      el("div", { class: "field" }, el("label", { text: "Quantité" }), qte),
+      el("div", { class: "field" }, el("label", { text: "Unité" }), unite),
+      el("div", { class: "field" }, el("label", { text: "Coût unitaire (€)" }), pu),
+      el("div", { class: "field" }, el("label", { text: "Forfait (€)" }), forf)));
+    content.append(el("div", { class: "field" }, el("label", {}, ht, " Base HT (achats / prestations)")));
+    content.append(el("div", { class: "field" }, el("label", { text: "Note" }), note));
+    content.append(el("p", { class: "hint", text: "Laissez vide ce qui ne sert pas : quantité × coût unitaire, ou forfait seul. Le montant se calcule tout seul et remonte dans les totaux." }));
+    actions.append(el("button", { class: "secondary", text: "Annuler", onclick: close }));
+    actions.append(el("button", {
+      class: "primary", text: "Ajouter la ligne",
+      onclick: async () => {
+        if (!lib.value.trim()) { alert("Saisissez un intitulé."); return; }
+        await api(`/api/films/${state.filmId}/lignes`, "POST", {
+          parent_id: sel.value, type: "ligne", libelle: lib.value,
+          quantite: parseNum(qte.value), unite: unite.value,
+          cout_unitaire: parseNum(pu.value), montant_forfait: parseNum(forf.value),
+          ht: ht.checked, note: note.value,
+        });
+        close(); state.allExpanded = true; await loadDevis(); renderDevis();
+      },
+    }));
+  }, 640);
 }
 
 function modalNouvelleLigne(parent, type) {

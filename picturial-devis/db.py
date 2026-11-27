@@ -747,6 +747,8 @@ def seed_referentiel(conn):
     """Convention de démonstration (montants fictifs, v1) + CCNPC importé du document officiel."""
     cur = conn.execute("SELECT COUNT(*) AS n FROM conventions")
     if cur.fetchone()["n"] > 0:
+        # Vieille base (v1) : importe la CCNPC si elle manque (import idempotent).
+        importer_minimas_ccnpc(conn)
         return
     conv_id = new_id()
     conn.execute(

@@ -396,6 +396,24 @@ class V2CncTest(unittest.TestCase):
         nb = self.conn.execute("SELECT COUNT(*) AS n FROM fonctions WHERE convention_id=?", (conv["id"],)).fetchone()["n"]
         self.assertGreater(nb, 150)
 
+    def test_vieille_base_recoit_la_ccnpc_au_demarrage(self):
+        # base v1 (convention démo seule) : initialiser() doit importer la CCNPC quand même
+        import sqlite3
+        tmp2 = tempfile.mkdtemp(prefix="picturial-old-")
+        conn2 = sqlite3.connect(os.path.join(tmp2, "old.db"))
+        conn2.row_factory = sqlite3.Row
+        conn2.executescript(db.SCHEMA)
+        conn2.execute("INSERT INTO conventions (id, nom, description) VALUES ('c1', 'Convention de démonstration (montants fictifs)', '')")
+        conn2.commit()
+        conn2.close()
+        conn2 = db.connect(os.path.join(tmp2, "old.db"))
+        db.seed_referentiel(conn2)
+        conv = conn2.execute("SELECT * FROM conventions WHERE nom LIKE 'CCNPC%'").fetchone()
+        self.assertIsNotNone(conv)
+        nb = conn2.execute("SELECT COUNT(*) AS n FROM fonctions WHERE convention_id=?", (conv["id"],)).fetchone()["n"]
+        self.assertGreater(nb, 150)
+        conn2.close()
+
     def test_nomenclature_cnc_et_charges_poste4(self):
         film_id = db.creer_film(self.conn, "Film CNC", taux_charges=0.57)
         calc = engine.compute_film(self.conn, film_id)

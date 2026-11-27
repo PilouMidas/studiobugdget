@@ -570,7 +570,7 @@ async function renderPersonnelView(d, poste) {
       return items;
     }
 
-    app.append(el("p", { class: "hint", text: "Page 2 « Personnel » reproduite de l’onglet « 2.Personnel » du modèle Excel : par fonction (2311., 2321., …), 3 phases Préparation / Tournage / Finitions, chacune avec salaire × jours/semaines. La colonne « En région » correspond au bloc « Région » (G–P) du modèle, « France hors rég. » au bloc « France » (R–AA) : la ventilation se saisit directement dans les lignes, comme les colonnes du tableur." }));
+    app.append(el("p", { class: "hint", text: "Page 2 « Personnel » reproduite de l’onglet « 2.Personnel » du modèle Excel : par fonction (2311., 2321., …), 3 phases Préparation / Tournage / Finitions. Sur chaque fonction, renseignez le salaire brut (pré-rempli au minimum du barème CCNPC, négociable — avertissement si inférieur) puis les quantités par phase : l’engagement est créé automatiquement dès la première quantité. La colonne « En région » correspond au bloc « Région » (G–P) du modèle, « France hors rég. » au bloc « France » (R–AA)." }));
 
     const wrap = el("div", { class: "table-wrap" });
     const table = el("table", { class: "devis personnel" });
@@ -658,9 +658,16 @@ async function renderPersonnelView(d, poste) {
       let libTxt = n.libelle;
       if (t.salaire != null) libTxt += ` — ${fmt(t.salaire)} / ${t.unite}`;
       tr.append(el("td", { style: "padding-left:" + prof * 16 + "px", text: libTxt }));
-      tr.append(el("td", {}), el("td", { class: "num" }), el("td", {}),
-        el("td", { class: "num", text: t.salaire != null ? fmt(t.salaire) : "" }),
-        el("td", { class: "montant calcule num" + ((n.tech_info && n.tech_info.avertissements || []).length || t.hypothese_manuelle ? " hyp" : ""), text: fmt(n.montant) }),
+      tr.append(el("td", {}), el("td", { class: "num" }), el("td", { text: t.unite || "" }));
+      // salaire brut unitaire éditable directement (min. barème pré-rempli à la création)
+      const sal = el("input", { class: "cell num", style: "width:100px", value: t.salaire != null ? fmtPlain(t.salaire) : "" });
+      sal.addEventListener("change", async () => {
+        try { await api(`/api/techniciens/${t.id}`, "PUT", { salaire: parseNum(sal.value) }); }
+        catch (e) { alert(e.message); }
+        await reload();
+      });
+      tr.append(el("td", { class: "num" }, sal),
+        el("td", { class: "montant calcule total num" + ((n.tech_info && n.tech_info.avertissements || []).length || t.hypothese_manuelle ? " hyp" : ""), text: fmt(n.montant) }),
         ...ventTds(n, false), aVentilerTd(n));
       tr.append(actionsTd(n, [
         { label: "👤 Modifier le tarif ou les durées", fn: () => modalOuvrirTechnicien(t.id) },
@@ -688,6 +695,68 @@ async function renderPersonnelView(d, poste) {
       return tr;
     }
 
+    // Ligne fonction avec barème suggéré : salaire + les 3 phases en ligne, engagement créé
+    // automatiquement dès qu'une quantité est saisie (préparation / tournage / finitions).
+    function fonctionEditorRow(n, prof) {
+      const sug = n.fonction_suggeree;
+      const tr = el("tr", { class: n.type, "data-id": n.id });
+      tr.append(el("td", { class: "code", text: n.chemin || n.code || "" }));
+      const lib = el("input", { class: "cell", value: n.libelle, style: "min-width:200px" });
+      lib.addEventListener("change", () => saveLigne(n.id, { libelle: lib.value }));
+      tr.append(el("td", { style: "padding-left:" + prof * 16 + "px" }, lib));
+      tr.append(el("td", {}), el("td", { class: "num" }), el("td", { text: sug.unite }));
+      const sal = el("input", { class: "cell num", style: "width:100px", value: fmtPlain(sug.minimum), title: `Minimum barème : ${fmt(sug.minimum)} / ${sug.unite} — négociable, avertissement si inférieur` });
+      sal.setAttribute("data-sal", n.id);
+      sal.addEventListener("change", () => tryCreateEngagement(n));
+      tr.append(el("td", { class: "num" }, sal),
+        el("td", { class: "montant " + (n.statut_montant || "calcule"), text: fmt(n.montant) }),
+        ...ventTds(n, true), aVentilerTd(n));
+      tr.append(actionsTd(n, [
+        { label: `Barème : ${sug.nom} — min. ${fmt(sug.minimum)} / ${sug.unite} (${sug.statut === "verifie" ? "VÉRIFIÉ" : "DÉMONSTRATION"})`, fn: () => modalTechnicien(n, null, sug) },
+        { label: "👤 Choisir une autre fonction…", fn: () => modalTechnicien(n, null, null) },
+        { label: "✚ Forfait direct sur cette ligne", fn: () => modalSousDetail(n) },
+      ]));
+      return tr;
+    }
+
+    function phaseTemplateRow(n, ph, prof) {
+      const sug = n.fonction_suggeree;
+      const tr = el("tr", { class: "phase", "data-tpl": n.id });
+      tr.append(el("td", { class: "code", text: "" }));
+      tr.append(el("td", { style: "padding-left:" + prof * 16 + "px", text: ph }));
+      tr.append(el("td", { text: ph }));
+      const q = el("input", { class: "cell num", style: "width:70px", value: "", placeholder: "0" });
+      q.setAttribute("data-qte", ph);
+      q.addEventListener("change", () => tryCreateEngagement(n));
+      tr.append(el("td", { class: "num" }, q),
+        el("td", { text: sug.unite }),
+        el("td", { class: "num", text: fmt(sug.minimum) }),
+        el("td", { class: "montant calcule num", text: "—" }),
+        el("td", { class: "num", text: "—" }), el("td", { class: "num", text: "—" }),
+        el("td", { class: "num", text: "—" }), el("td", { class: "num", text: "—" }),
+        el("td", {}));
+      return tr;
+    }
+
+    async function tryCreateEngagement(n) {
+      const sug = n.fonction_suggeree;
+      if (!sug) return;
+      const salInp = tbody.querySelector(`input[data-sal="${n.id}"]`);
+      const salaire = salInp ? parseNum(salInp.value) : null;
+      const phases = state.referentiel.phases.map((ph) => {
+        const q = tbody.querySelector(`tr[data-tpl="${n.id}"] input[data-qte="${ph}"]`);
+        return { phase: ph, quantite: q ? (parseNum(q.value) || 0) : 0, unite: sug.unite };
+      }).filter((p) => p.quantite > 0);
+      if (!phases.length) return; // attend au moins une quantité
+      try {
+        await api(`/api/films/${state.filmId}/techniciens`, "POST", {
+          parent_id: n.id, fonction_id: sug.id,
+          salaire: salaire != null ? salaire : sug.minimum, unite: sug.unite, phases,
+        });
+      } catch (e) { alert(e.message); }
+      await reload();
+    }
+
     function walk(nodes, prof) {
       for (const n of nodes) {
         const kids = n.children || [];
@@ -695,7 +764,12 @@ async function renderPersonnelView(d, poste) {
           tbody.append(techRow(n, prof));
           for (const p of (n.phases || [])) tbody.append(phaseRow(n, p, prof + 1));
         } else if (!kids.length) {
-          tbody.append(feuilleRow(n, prof));
+          if (n.fonction_suggeree) {
+            tbody.append(fonctionEditorRow(n, prof));
+            for (const ph of state.referentiel.phases) tbody.append(phaseTemplateRow(n, ph, prof + 1));
+          } else {
+            tbody.append(feuilleRow(n, prof));
+          }
         } else {
           tbody.append(headerRow(n, prof));
           walk(kids, prof + 1);
@@ -708,7 +782,7 @@ async function renderPersonnelView(d, poste) {
     tbody.append(el("tr", { class: "poste" },
       el("td", { class: "code", text: "2." }), el("td", { text: "TOTAL POSTE 2 — PERSONNEL" }), el("td", {}),
       el("td", { class: "num" }), el("td", {}), el("td", { class: "num" }),
-      el("td", { class: "montant num", text: fmt(tp.montant) }),
+      el("td", { class: "montant total num", text: fmt(tp.montant) }),
       el("td", { class: "num", text: fmt(tp.en_region) }), el("td", { class: "num", text: fmt(tp.hors_region) }),
       el("td", { class: "num", text: fmt(tp.etranger || 0) }), el("td", { class: "num", text: fmt(tp.a_ventiler) }),
       el("td", {})));
